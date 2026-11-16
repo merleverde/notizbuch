@@ -614,6 +614,7 @@ wrap.addEventListener('pointerdown', onDown);
 window.addEventListener('pointermove', onMove);
 window.addEventListener('pointerup', onUp);
 window.addEventListener('pointercancel', onUp);
+window.addEventListener('pointerout', penBtnHandler);
 wrap.addEventListener('contextmenu', e => e.preventDefault());
 wrap.addEventListener('wheel', e => {
   if (!e.ctrlKey || !S.note) return;
@@ -634,16 +635,34 @@ function toPage(p, cx, cy) {
 const penButton = e => ((e.pointerType === 'pen' || e.pointerType === 'touch') && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32)))
   || (e.pointerType === 'mouse' && (e.button === 2 || (e.buttons & 2)) && navigator.maxTouchPoints > 0);
 /* Samsung-Tablets: Seitentaste über dem Display gedrückt → Chrome meldet „gedrückt“ mit Druck 0.
-   Solange die Taste gehalten wird, radiert der Stift bei Berührung (Druck > 0). */
+   Der Tastenzustand wird nur aus schwebenden Ereignissen (Druck 0) gelesen und gemerkt.
+   Jede Berührung (Druck > 0) bei gemerkter Taste ist eine eigene, kurze Radier-Aktion. */
 const hoverButton = e => e.pointerType === 'pen' && e.pressure === 0 && (e.buttons & 1) === 1;
+let penBtn = false;
 
-function startBtnErase(e) {
-  act = { tool: 'btnErase', pid: e.pointerId, p: null };
-  try { wrap.setPointerCapture(e.pointerId); } catch {}
-  btnEraseMove(e);
+function penBtnHandler(e) {
+  if (e.pointerType !== 'pen' || !S.note) return false;
+  if (e.type === 'pointerout') { if (!e.relatedTarget) penBtn = false; return false; }
+  if (e.pressure === 0 && (e.type === 'pointermove' || e.type === 'pointerdown')) penBtn = (e.buttons & 1) === 1;
+  const btnAct = act && act.tool === 'btnErase';
+  if (e.type === 'pointerup' || e.type === 'pointercancel') {
+    if (btnAct) { finishBtnPage(); act = null; return true; }
+    return false;
+  }
+  if (btnAct) {
+    if (e.pressure > 0) btnEraseMove(e);
+    else { finishBtnPage(); act = null; }               // abgehoben: diese Radier-Berührung ist fertig
+    return true;
+  }
+  if (hoverButton(e)) return true;                       // schwebt mit Taste: nichts zeichnen
+  if (penBtn && e.pressure > 0 && !act && wrap.contains(e.target)) {
+    act = { tool: 'btnErase', pid: e.pointerId, p: null };
+    btnEraseMove(e);
+    return true;
+  }
+  return false;
 }
 function btnEraseMove(e) {
-  // Nur bei Berührung radieren, nicht beim Schweben (dort meldet Chrome Druck 0)
   const erasing = e.pressure > 0;
   const p = pageAt(e.clientX, e.clientY);
   if (p && p !== act.p) {
@@ -671,7 +690,9 @@ function onDown(e) {
   if (e.target.closest('.tx.editing, .selbox')) return;
   if (S.editing) commitText();
   hidePops();
-  if (hoverButton(e)) { if (!act) startBtnErase(e); return; }
+  // Ein neues Aufsetzen beendet eine hängengebliebene Stift-Aktion (fehlendes pointerup)
+  if (act && act.tool !== 'btnErase' && act.tool !== 'move' && act.tool !== 'scale' && e.pointerType === 'pen') { try { endAct(e); } catch { act = null; } }
+  if (penBtnHandler(e)) { e.preventDefault(); return; }
   if (e.pointerType === 'touch' && !prefs.finger && !penButton(e)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = [...touches.values()];
@@ -688,6 +709,7 @@ function onDown(e) {
   startAct(tool, p, e);
 }
 function onMove(e) {
+  if (penBtnHandler(e)) return;
   if (touches.has(e.pointerId)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (gest?.type === 'pan' && gest.id === e.pointerId) {
@@ -701,10 +723,9 @@ function onMove(e) {
     return;
   }
   if (act && e.pointerId === act.pid) moveAct(e);
-  // Taste gedrückt, ohne dass Chrome ein „pointerdown“ auf der Seite geschickt hat
-  else if (!act && S.note && hoverButton(e) && wrap.contains(e.target)) startBtnErase(e);
 }
 function onUp(e) {
+  if (penBtnHandler(e)) return;
   if (touches.has(e.pointerId)) {
     touches.delete(e.pointerId);
     if (gest?.type === 'pan' && gest.id === e.pointerId && !gest.moved && e.type === 'pointerup' && performance.now() - gest.t < 450) tapAt(e.clientX, e.clientY);
@@ -1128,7 +1149,7 @@ function logPen(e) {
   if ($('#penTest').hidden) return;
   if (e.type === 'pointermove' && e.buttons === lastButtons) return;
   lastButtons = e.buttons ?? -1;
-  penLog.unshift(`${e.type.replace('pointer', '')}  typ=${e.pointerType ?? '-'}  taste=${e.button ?? '-'}  tasten=${e.buttons ?? '-'}  druck=${(e.pressure ?? 0).toFixed(2)}  → ${penButton(e) || hoverButton(e) ? 'RADIERER' : 'normal'}`);
+  penLog.unshift(`${e.type.replace('pointer', '')}  typ=${e.pointerType ?? '-'}  taste=${e.button ?? '-'}  tasten=${e.buttons ?? '-'}  druck=${(e.pressure ?? 0).toFixed(2)}  → ${penButton(e) || hoverButton(e) || (penBtn && e.pressure > 0) ? 'RADIERER' : 'normal'}  merkt=${penBtn ? 'Taste' : '-'}`);
   penLog.length = Math.min(penLog.length, 12);
   $('#penLog').textContent = penLog.join('\n');
 }
