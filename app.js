@@ -643,7 +643,11 @@ let penBtn = false;
 function penBtnHandler(e) {
   if (e.pointerType !== 'pen' || !S.note) return false;
   if (e.type === 'pointerout') { if (!e.relatedTarget) penBtn = false; return false; }
-  if (e.pressure === 0 && (e.type === 'pointermove' || e.type === 'pointerdown')) penBtn = (e.buttons & 1) === 1;
+  if (e.pressure === 0 && (e.type === 'pointermove' || e.type === 'pointerdown')) {
+    const now = (e.buttons & 1) === 1;
+    if (now && !penBtn && prefs.btnToggle) toggleEraser();
+    penBtn = now;
+  }
   const btnAct = act && act.tool === 'btnErase';
   if (e.type === 'pointerup' || e.type === 'pointercancel') {
     if (btnAct) { finishBtnPage(); act = null; return true; }
@@ -661,6 +665,15 @@ function penBtnHandler(e) {
     return true;
   }
   return false;
+}
+/* Einstellung „dauerhaft umschalten“: jeder Tastendruck wechselt zwischen Radierer und vorherigem Werkzeug */
+let toolBeforeEraser = 'pen', lastToggle = 0;
+function toggleEraser() {
+  const t = performance.now();
+  if (t - lastToggle < 300) return;                      // Flackern der Tastenmeldung ignorieren
+  lastToggle = t;
+  if (prefs.tool === 'eraser') { setTool(toolBeforeEraser); toast('Stift aktiv', 1200); }
+  else { toolBeforeEraser = prefs.tool; setTool('eraser'); toast('Radierer aktiv. Taste nochmal drücken für den Stift.', 1600); }
 }
 function btnEraseMove(e) {
   const erasing = e.pressure > 0;
@@ -1090,6 +1103,7 @@ function updToolbar() {
   $('#btnBold').classList.toggle('active', prefs.bold);
   $('#customColor').value = /^#[0-9a-f]{6}$/i.test(prefs.color) ? prefs.color : '#000000';
   $('#optFinger').checked = prefs.finger;
+  $('#optBtnToggle').checked = !!prefs.btnToggle;
   $('#optEditable').checked = prefs.editable;
 }
 function setTool(t) {
@@ -1157,6 +1171,7 @@ for (const t of ['pointerdown', 'pointerup', 'pointermove', 'pointercancel', 'co
   window.addEventListener(t, logPen, true);
 $('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true; });
 $('#optFinger').addEventListener('change', e => { prefs.finger = e.target.checked; savePrefs(); toast(prefs.finger ? 'Finger zeichnet jetzt. Scrollen mit zwei Fingern.' : 'Finger scrollt, nur der Stift zeichnet.'); });
+$('#optBtnToggle').addEventListener('change', e => { prefs.btnToggle = e.target.checked; savePrefs(); toast(prefs.btnToggle ? 'S-Pen-Taste schaltet jetzt zwischen Stift und Radierer um.' : 'S-Pen-Taste radiert nur, solange du sie gedrückt hältst.', 3500); });
 $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.checked; savePrefs(); });
 
 function addPage() {
