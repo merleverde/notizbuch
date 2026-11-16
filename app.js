@@ -20,7 +20,7 @@ const ORIG_NAME = 'notizbuch-original.pdf';
 /* ---------------- Einstellungen ---------------- */
 const prefs = Object.assign({
   tool: 'pen', color: COLORS[0], sizes: { pen: 2, marker: 14, eraser: 20, shape: 2 },
-  penStyle: 'fountain', smooth: 1, shape: 'rect', emode: 'area', textSize: 16, bold: false, finger: false, editable: true, folders: []
+  penStyle: 'fountain', smoothing: 0, shape: 'rect', emode: 'area', textSize: 16, bold: false, finger: false, editable: true, folders: []
 }, (() => { try { return JSON.parse(localStorage.getItem('notizbuch.prefs')) || {}; } catch { return {}; } })());
 function savePrefs() { try { localStorage.setItem('notizbuch.prefs', JSON.stringify(prefs)); } catch {} }
 
@@ -874,7 +874,7 @@ function addPts(e) {
     return;
   }
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
-  const al = it.tool === 'cover' ? 1 : SMOOTH_ALPHA[prefs.smooth] ?? 1;
+  const al = it.tool === 'cover' ? 1 : SMOOTH_ALPHA[prefs.smoothing] ?? 1;
   for (const ev of evs) {
     let [x, y] = toPageA(ev.clientX, ev.clientY);
     let pr = ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5;
@@ -909,7 +909,7 @@ function addPts(e) {
 /* Glätten: 0 = aus, 1 = mittel, 2 = stark */
 const SMOOTH_ALPHA = [1, 0.5, 0.22];
 function smoothStroke(a) {
-  const lvl = prefs.smooth ?? 1, it = a.item;
+  const lvl = prefs.smoothing ?? 0, it = a.item;
   if (!lvl || it.tool === 'cover' || it.pts.length < 3) return;
   // bis zur echten Stiftposition nachziehen, dann mehrfach mitteln (Endpunkte bleiben fest)
   if (a.raw) {
@@ -1185,10 +1185,9 @@ function updToolbar() {
       b.dataset.value = v;
     });
   }
-  $('#penStyles').hidden = t !== 'pen';
-  $('#smoothModes').hidden = t !== 'pen' && t !== 'marker';
-  document.querySelectorAll('[data-smooth]').forEach(b => b.classList.toggle('active', +b.dataset.smooth === (prefs.smooth ?? 1)));
+  $('#penKind').textContent = PEN_LABELS[prefs.penStyle] || '';
   document.querySelectorAll('[data-pstyle]').forEach(b => b.classList.toggle('active', b.dataset.pstyle === prefs.penStyle));
+  $('#optSmooth').value = String(prefs.smoothing ?? 0);
   $('#eraserModes').hidden = t !== 'eraser';
   $('#shapeKinds').hidden = t !== 'shape';
   $('#textOpts').hidden = t !== 'text';
@@ -1210,15 +1209,26 @@ function setColor(c) {
   prefs.color = c; savePrefs(); updToolbar(); styleEditing();
 }
 
+const PEN_LABELS = { fountain: 'Füller', ball: 'Kuli', pencil: 'Blei', brush: 'Pinsel', calligraphy: 'Kalli' };
+let lastPenTap = 0;
+$('#penPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-pstyle]'); if (!b) return;
+  prefs.penStyle = b.dataset.pstyle; savePrefs(); hidePops(); setTool('pen');
+});
+$('#optSmooth').addEventListener('change', e => { prefs.smoothing = +e.target.value; savePrefs(); });
 $('#toolbar').addEventListener('pointerdown', e => { if (S.editing && e.target.closest('button,select,input')) e.preventDefault(); });
 $('#toolbar').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.tool) setTool(b.dataset.tool);
+  if (b.dataset.tool === 'pen') {
+    // Doppeltippen auf den Stift öffnet die Auswahl der Stiftart
+    const t = performance.now();
+    if (prefs.tool === 'pen' && t - lastPenTap < 400) { lastPenTap = 0; showPop($('#penPop'), b); }
+    else { lastPenTap = t; setTool('pen'); }
+  }
+  else if (b.dataset.tool) setTool(b.dataset.tool);
   else if (b.dataset.color) setColor(b.dataset.color);
   else if (b.dataset.shape) { prefs.shape = b.dataset.shape; savePrefs(); updToolbar(); }
   else if (b.dataset.emode) { prefs.emode = b.dataset.emode; savePrefs(); updToolbar(); }
-  else if (b.dataset.pstyle) { prefs.penStyle = b.dataset.pstyle; savePrefs(); updToolbar(); }
-  else if (b.dataset.smooth) { prefs.smooth = +b.dataset.smooth; savePrefs(); updToolbar(); }
   else if (b.dataset.preset) {
     if (presetSaved) { presetSaved = false; return; }
     prefs.sizes[prefs.tool] = +b.dataset.value; savePrefs(); updToolbar();

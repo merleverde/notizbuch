@@ -199,6 +199,16 @@ button { cursor: pointer; }
 .seg button { border: 0; background: transparent; border-radius: 8px; min-width: 36px; height: 34px; display: grid; place-items: center; padding: 0 8px; font-size: .85rem; white-space: nowrap; }
 .seg button svg { width: 20px; height: 20px; }
 .seg button.active { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.12); color: var(--accent); }
+.pen-tool { position: relative; }
+.pen-kind {
+  position: absolute; left: 50%; bottom: 1px; transform: translateX(-50%);
+  font-size: .56rem; font-weight: 700; letter-spacing: .02em; white-space: nowrap; line-height: 1;
+}
+.popover.pen-pop button { flex-direction: column; align-items: flex-start; gap: 1px; }
+.pen-pop button span { font-size: .8rem; color: var(--muted); }
+.pen-pop button.active { background: var(--accent-soft); }
+.pen-pop button.active b { color: var(--accent); }
+.popover .check select { margin-left: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 4px 6px; }
 .presets button { width: 36px; padding: 0; }
 .presets i { display: block; border-radius: 50%; background: currentColor; width: var(--d, 6px); height: var(--d, 6px); }
 .seg select { border: 0; background: transparent; padding: 0 4px; }

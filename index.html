@@ -63,8 +63,9 @@
 
   <div class="toolbar" id="toolbar">
     <div class="tools" role="toolbar" aria-label="Werkzeuge">
-      <button class="tool" data-tool="pen" title="Stift">
+      <button class="tool pen-tool" data-tool="pen" title="Stift (doppelt tippen: Stiftart wählen)">
         <svg viewBox="0 0 24 24"><path d="M4 20l1.2-4.6L16.5 4.1a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14.5 6l3.5 3.5" stroke="currentColor" stroke-width="1.8"/></svg>
+        <span class="pen-kind" id="penKind"></span>
       </button>
       <button class="tool" data-tool="marker" title="Textmarker">
         <svg viewBox="0 0 24 24"><path d="M9 15l-3 3v2h4l2-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 15l8.5-9.5a2 2 0 0 1 2.9 0 2 2 0 0 1 0 2.8L12 18z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M3 22h9" stroke="currentColor" stroke-width="3" opacity=".45"/></svg>
@@ -86,18 +87,6 @@
       </button>
     </div>
     <span class="sep"></span>
-    <div id="penStyles" class="seg" hidden aria-label="Stiftart">
-      <button data-pstyle="fountain" title="Füller: Druck macht breiter und dunkler">Füller</button>
-      <button data-pstyle="ball" title="Kugelschreiber: gleichmäßige Breite, Druck macht dunkler">Kuli</button>
-      <button data-pstyle="pencil" title="Bleistift: körnig, Druck macht deutlich dunkler">Bleistift</button>
-      <button data-pstyle="brush" title="Pinsel: sehr druckempfindlich">Pinsel</button>
-      <button data-pstyle="calligraphy" title="Kalligrafie: Breite hängt von der Strichrichtung ab">Kalligrafie</button>
-    </div>
-    <div id="smoothModes" class="seg" hidden aria-label="Glätten">
-      <button data-smooth="0" title="Striche genau so, wie du sie zeichnest">Glätten aus</button>
-      <button data-smooth="1" title="Leichtes Zittern herausfiltern">Mittel</button>
-      <button data-smooth="2" title="Sehr ruhige, runde Striche">Stark</button>
-    </div>
     <div id="swatches" class="swatches" aria-label="Farben"></div>
     <label class="custom-color" title="Eigene Farbe"><input type="color" id="customColor" value="#1b1f24"><span>+</span></label>
     <span class="sep"></span>
@@ -141,10 +130,23 @@
     <label class="check"><input type="checkbox" id="optEditable"> Schrift in der PDF bearbeitbar halten</label>
     <hr>
     <label class="check"><input type="checkbox" id="optFinger"> Mit dem Finger zeichnen</label>
+    <label class="check">Striche glätten
+      <select id="optSmooth" aria-label="Striche glätten">
+        <option value="0">Aus</option><option value="1">Mittel</option><option value="2">Stark</option>
+      </select>
+    </label>
     <button data-m="zoomReset">Zoom zurücksetzen</button>
     <button data-m="penTest">Stift-Tasten testen</button>
   </div>
 </section>
+
+<div id="penPop" class="popover pen-pop" hidden aria-label="Stiftart">
+  <button data-pstyle="fountain"><b>Füller</b><span>Druck macht breiter und dunkler</span></button>
+  <button data-pstyle="ball"><b>Kugelschreiber</b><span>Gleichmäßig breit, Druck macht dunkler</span></button>
+  <button data-pstyle="pencil"><b>Bleistift</b><span>Körnig, Druck macht deutlich dunkler</span></button>
+  <button data-pstyle="brush"><b>Pinsel</b><span>Sehr druckempfindlich</span></button>
+  <button data-pstyle="calligraphy"><b>Kalligrafie</b><span>Breite hängt von der Strichrichtung ab</span></button>
+</div>
 
 <div id="cardPop" class="popover" hidden>
   <button data-c="rename">Umbenennen</button>
