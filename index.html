@@ -86,10 +86,27 @@
       </button>
     </div>
     <span class="sep"></span>
+    <div id="penStyles" class="seg" hidden aria-label="Stiftart">
+      <button data-pstyle="fountain" title="Füller: Druck macht breiter und dunkler">Füller</button>
+      <button data-pstyle="ball" title="Kugelschreiber: gleichmäßige Breite, Druck macht dunkler">Kuli</button>
+      <button data-pstyle="pencil" title="Bleistift: körnig, Druck macht deutlich dunkler">Bleistift</button>
+      <button data-pstyle="brush" title="Pinsel: sehr druckempfindlich">Pinsel</button>
+      <button data-pstyle="calligraphy" title="Kalligrafie: Breite hängt von der Strichrichtung ab">Kalligrafie</button>
+    </div>
+    <div id="smoothModes" class="seg" hidden aria-label="Glätten">
+      <button data-smooth="0" title="Striche genau so, wie du sie zeichnest">Glätten aus</button>
+      <button data-smooth="1" title="Leichtes Zittern herausfiltern">Mittel</button>
+      <button data-smooth="2" title="Sehr ruhige, runde Striche">Stark</button>
+    </div>
     <div id="swatches" class="swatches" aria-label="Farben"></div>
     <label class="custom-color" title="Eigene Farbe"><input type="color" id="customColor" value="#1b1f24"><span>+</span></label>
     <span class="sep"></span>
     <div id="sizeBox" class="size-box">
+      <div id="sizePresets" class="seg presets" aria-label="Schnellwahl Stärke (lange drücken zum Speichern)">
+        <button data-preset="0" title="Fein (lange drücken: aktuelle Stärke speichern)"><i></i></button>
+        <button data-preset="1" title="Mittel (lange drücken: aktuelle Stärke speichern)"><i></i></button>
+        <button data-preset="2" title="Dick (lange drücken: aktuelle Stärke speichern)"><i></i></button>
+      </div>
       <span class="size-dot" id="sizeDot"></span>
       <input type="range" id="sizeRange" aria-label="Stärke">
     </div>

@@ -20,7 +20,7 @@ const ORIG_NAME = 'notizbuch-original.pdf';
 /* ---------------- Einstellungen ---------------- */
 const prefs = Object.assign({
   tool: 'pen', color: COLORS[0], sizes: { pen: 2, marker: 14, eraser: 20, shape: 2 },
-  shape: 'rect', emode: 'area', textSize: 16, bold: false, finger: false, editable: true, folders: []
+  penStyle: 'fountain', smooth: 1, shape: 'rect', emode: 'area', textSize: 16, bold: false, finger: false, editable: true, folders: []
 }, (() => { try { return JSON.parse(localStorage.getItem('notizbuch.prefs')) || {}; } catch { return {}; } })());
 function savePrefs() { try { localStorage.setItem('notizbuch.prefs', JSON.stringify(prefs)); } catch {} }
 
@@ -84,7 +84,54 @@ function inPoly(x, y, poly) {
 const fmtDate = t => new Date(t).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 /* ---------------- Zeichnen ---------------- */
-const penW = (size, pr) => size * (0.35 + 0.9 * pr);
+/* Stiftarten: Breite (w) und Farbintensität (i) hängen vom Druck p (0…1) ab.
+   Striche ohne „style“ stammen aus älteren Versionen und behalten ihr Aussehen. */
+const PEN_STYLES = {
+  fountain:    { w: (s, p) => s * (0.35 + 0.9 * p), i: p => 0.5 + 0.5 * p, max: 1.25 },
+  ball:        { w: (s, p) => s * (0.8 + 0.3 * p), i: p => 0.55 + 0.45 * p, max: 1.1 },
+  pencil:      { w: (s, p) => s * (0.7 + 0.5 * p), i: p => 0.15 + 0.85 * p, max: 1.2, grain: true },
+  brush:       { w: (s, p) => s * (0.15 + 2.2 * p), i: p => 0.65 + 0.35 * p, max: 2.35 },
+  calligraphy: { w: (s, p, a) => s * (0.25 + 1.6 * Math.abs(Math.sin(a - Math.PI / 4))) * (0.6 + 0.5 * p), i: p => 0.7 + 0.3 * p, max: 2 },
+  legacy:      { w: (s, p) => s * (0.35 + 0.9 * p), i: () => 1, max: 1.25 }
+};
+const penStyle = it => PEN_STYLES[it.style] || PEN_STYLES.legacy;
+const penMaxW = it => (it.tool === 'marker' || it.tool === 'cover') ? it.size : it.size * penStyle(it).max;
+
+/* Wenig Druck = hellere Farbe (zum Papierweiß hin gemischt), in 12 Stufen zwischengespeichert */
+const shadeCache = new Map();
+function shade(hex, i) {
+  i = Math.round(clamp(i, 0, 1) * 12) / 12;
+  const key = hex + i;
+  let c = shadeCache.get(key);
+  if (!c) {
+    const n = parseInt(hex.slice(1), 16), f = v => Math.round(v + (255 - v) * (1 - i) * 0.85);
+    c = `rgb(${f(n >> 16 & 255)},${f(n >> 8 & 255)},${f(n & 255)})`;
+    shadeCache.set(key, c);
+  }
+  return c;
+}
+/* Bleistift-Körnung: Farbe mit zufällig durchlässigen Pixeln (fester Zufall → immer gleiches Muster) */
+const grainCanvases = new Map(), grainPatterns = new WeakMap();
+function grainPattern(ctx, color) {
+  let g = grainCanvases.get(color);
+  if (!g) {
+    g = document.createElement('canvas'); g.width = g.height = 32;
+    const gx = g.getContext('2d'); gx.fillStyle = color; gx.fillRect(0, 0, 32, 32);
+    const d = gx.getImageData(0, 0, 32, 32); let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let j = 3; j < d.data.length; j += 4) d.data[j] = rnd() < 0.2 ? 0 : 120 + rnd() * 135;
+    gx.putImageData(d, 0, 0); grainCanvases.set(color, g);
+  }
+  let m = grainPatterns.get(ctx);
+  if (!m) { m = new Map(); grainPatterns.set(ctx, m); }
+  let pat = m.get(color);
+  if (!pat) { pat = ctx.createPattern(g, 'repeat'); m.set(color, pat); }
+  return pat;
+}
+function penPaint(ctx, it, st, pr) {
+  const c = shade(it.color, st.i(pr));
+  return st.grain ? grainPattern(ctx, c) : c;
+}
 
 function drawPaper(ctx, p) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, p.w, p.h);
@@ -122,14 +169,17 @@ function drawStroke(ctx, it) {
     if (n > 1) ctx.lineTo(pts[n - 1][0], pts[n - 1][1]);
     ctx.stroke();
   } else if (n < 3) {
-    for (const [x, y, pr] of pts) { ctx.beginPath(); ctx.arc(x, y, penW(it.size, pr) / 2, 0, 7); ctx.fill(); }
-    if (n === 2) { ctx.lineWidth = penW(it.size, pts[1][2]); ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); ctx.lineTo(pts[1][0], pts[1][1]); ctx.stroke(); }
+    const st = penStyle(it), a = n === 2 ? Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]) : 0;
+    for (const [x, y, pr] of pts) { ctx.fillStyle = penPaint(ctx, it, st, pr); ctx.beginPath(); ctx.arc(x, y, st.w(it.size, pr, a) / 2, 0, 7); ctx.fill(); }
+    if (n === 2) { ctx.strokeStyle = penPaint(ctx, it, st, pts[1][2]); ctx.lineWidth = st.w(it.size, pts[1][2], a); ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); ctx.lineTo(pts[1][0], pts[1][1]); ctx.stroke(); }
   } else {
+    const st = penStyle(it);
     let sx = pts[0][0], sy = pts[0][1];
     for (let i = 1; i < n - 1; i++) {
       const ex = i === n - 2 ? pts[n - 1][0] : (pts[i][0] + pts[i + 1][0]) / 2;
       const ey = i === n - 2 ? pts[n - 1][1] : (pts[i][1] + pts[i + 1][1]) / 2;
-      ctx.lineWidth = penW(it.size, pts[i][2]);
+      ctx.lineWidth = st.w(it.size, pts[i][2], Math.atan2(ey - sy, ex - sx));
+      ctx.strokeStyle = penPaint(ctx, it, st, pts[i][2]);
       ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(pts[i][0], pts[i][1], ex, ey); ctx.stroke();
       sx = ex; sy = ey;
     }
@@ -208,7 +258,7 @@ function bbox(it) {
   if (it.t === 'stroke') {
     let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
     for (const [x, y] of it.pts) { a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); }
-    const m = it.size / 2; return { x: a - m, y: b - m, w: c - a + 2 * m, h: d - b + 2 * m };
+    const m = penMaxW(it) / 2; return { x: a - m, y: b - m, w: c - a + 2 * m, h: d - b + 2 * m };
   }
   if (it.t === 'shape' && it.kind === 'poly') {
     const xs = it.pts.map(p => p[0]), ys = it.pts.map(p => p[1]), m = it.size / 2;
@@ -242,7 +292,7 @@ function shapeOutline(it) {
 function hitItem(it, x, y, r) {
   if (it.t === 'stroke') {
     if (!inBox(bbox(it), x, y, r)) return false;
-    const w = (it.tool === 'marker' ? it.size : penW(it.size, 1)) / 2 + r, p = it.pts;
+    const w = penMaxW(it) / 2 + r, p = it.pts;
     if (p.length === 1) return Math.hypot(p[0][0] - x, p[0][1] - y) < w;
     for (let i = 1; i < p.length; i++) if (segDist(x, y, p[i - 1][0], p[i - 1][1], p[i][0], p[i][1]) < w) return true;
     return false;
@@ -774,6 +824,7 @@ function startAct(tool, p, e, extra = {}) {
     addPts(e);
   } else if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
+    if (tool === 'pen') act.item.style = prefs.penStyle;
     addPts(e); holdCheck(x, y);
   } else if (tool === 'eraser') {
     eraseAt(x, y); drawEraser(x, y);
@@ -823,16 +874,27 @@ function addPts(e) {
     return;
   }
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+  const al = it.tool === 'cover' ? 1 : SMOOTH_ALPHA[prefs.smooth] ?? 1;
   for (const ev of evs) {
-    const [x, y] = toPageA(ev.clientX, ev.clientY);
-    const pr = ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5;
+    let [x, y] = toPageA(ev.clientX, ev.clientY);
+    let pr = ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5;
+    if (al < 1) {
+      // Stabilisierung: die Strichspitze folgt dem Stift weich nach und filtert Zittern heraus
+      act.raw = [x, y, pr];
+      if (act.sm) {
+        x = act.sm[0] + (x - act.sm[0]) * al; y = act.sm[1] + (y - act.sm[1]) * al;
+        pr = act.sm[2] + (pr - act.sm[2]) * Math.min(1, al * 1.5);
+      }
+      act.sm = [x, y, pr];
+    }
     const last = it.pts[it.pts.length - 1];
     if (last && Math.hypot(x - last[0], y - last[1]) < 0.7 / k) continue;
     it.pts.push([+x.toFixed(2), +y.toFixed(2), +pr.toFixed(2)]);
     if (it.tool === 'pen') {
-      ctx.strokeStyle = ctx.fillStyle = it.color; ctx.lineCap = 'round';
-      if (last) { ctx.lineWidth = penW(it.size, pr); ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(x, y); ctx.stroke(); }
-      else { ctx.beginPath(); ctx.arc(x, y, penW(it.size, pr) / 2, 0, 7); ctx.fill(); }
+      const st = penStyle(it), a = last ? Math.atan2(y - last[1], x - last[0]) : 0;
+      ctx.strokeStyle = ctx.fillStyle = penPaint(ctx, it, st, pr); ctx.lineCap = 'round';
+      if (last) { ctx.lineWidth = st.w(it.size, pr, a); ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(x, y); ctx.stroke(); }
+      else { ctx.beginPath(); ctx.arc(x, y, st.w(it.size, pr, a) / 2, 0, 7); ctx.fill(); }
     }
   }
   if (it.tool === 'marker') { ctx.clearRect(0, 0, act.p.w, act.p.h); drawStroke(ctx, it); }
@@ -843,6 +905,23 @@ function addPts(e) {
     return;
   }
   if (last) holdCheck(last[0], last[1]);
+}
+/* Glätten: 0 = aus, 1 = mittel, 2 = stark */
+const SMOOTH_ALPHA = [1, 0.5, 0.22];
+function smoothStroke(a) {
+  const lvl = prefs.smooth ?? 1, it = a.item;
+  if (!lvl || it.tool === 'cover' || it.pts.length < 3) return;
+  // bis zur echten Stiftposition nachziehen, dann mehrfach mitteln (Endpunkte bleiben fest)
+  if (a.raw) {
+    const l = it.pts[it.pts.length - 1];
+    if (Math.hypot(a.raw[0] - l[0], a.raw[1] - l[1]) > 0.5) it.pts.push([+a.raw[0].toFixed(2), +a.raw[1].toFixed(2), +l[2].toFixed(2)]);
+  }
+  let P = it.pts;
+  for (let k = 0; k < (lvl === 1 ? 2 : 7); k++) {
+    P = P.map((p, i) => (i === 0 || i === P.length - 1) ? p
+      : [0, 1, 2].map(j => +((P[i - 1][j] + 2 * p[j] + P[i + 1][j]) / 4).toFixed(2)));
+  }
+  it.pts = P;
 }
 function drawEraser(x, y) {
   const ctx = act.ctx; ctx.clearRect(0, 0, act.p.w, act.p.h);
@@ -864,7 +943,7 @@ function eraseAt(x, y) {
       changed = true;
       if (prefs.emode === 'stroke' || it.t === 'shape') continue;
       // Bereichsradierer: Strich an der Radierstelle auftrennen
-      const rr = r + penW(it.size, 1) / 2 * (it.tool === 'marker' ? 0.6 : 0.5);
+      const rr = r + penMaxW(it) / 2 * 0.5;
       const segs = []; let cur = [];
       for (const pt of it.pts) {
         if (Math.hypot(pt[0] - ex, pt[1] - ey) < rr) { if (cur.length) segs.push(cur); cur = []; }
@@ -930,6 +1009,7 @@ function endAct(e) {
     p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
+    smoothStroke(a);
     if (a.item.pts.length) p.items.push(a.item);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
   } else if (tool === 'eraser') {
@@ -1084,6 +1164,10 @@ function buildSwatches() {
     box.appendChild(b);
   }
 }
+const dotPx = (t, v) => clamp(v * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 : 2), 3, 24);
+/* Drei Schnellwahl-Stärken pro Werkzeug; langes Drücken speichert die aktuelle Stärke */
+const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5] };
+const presetsFor = t => (prefs.presets && prefs.presets[t]) || PRESETS[t];
 function updToolbar() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool));
   document.querySelectorAll('.swatch').forEach(b => b.classList.toggle('active', b.dataset.color === prefs.color));
@@ -1092,8 +1176,19 @@ function updToolbar() {
   if (sizeTool) {
     const [mn, mx, st] = SIZE_RANGE[t], r = $('#sizeRange');
     r.min = mn; r.max = mx; r.step = st; r.value = prefs.sizes[t];
-    $('#sizeDot').style.setProperty('--d', clamp(prefs.sizes[t] * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 : 2), 3, 24) + 'px');
+    $('#sizeDot').style.setProperty('--d', dotPx(t, prefs.sizes[t]) + 'px');
+    const pre = presetsFor(t);
+    document.querySelectorAll('[data-preset]').forEach(b => {
+      const v = pre[+b.dataset.preset];
+      b.querySelector('i').style.setProperty('--d', clamp(dotPx(t, v), 3, 20) + 'px');
+      b.classList.toggle('active', v === prefs.sizes[t]);
+      b.dataset.value = v;
+    });
   }
+  $('#penStyles').hidden = t !== 'pen';
+  $('#smoothModes').hidden = t !== 'pen' && t !== 'marker';
+  document.querySelectorAll('[data-smooth]').forEach(b => b.classList.toggle('active', +b.dataset.smooth === (prefs.smooth ?? 1)));
+  document.querySelectorAll('[data-pstyle]').forEach(b => b.classList.toggle('active', b.dataset.pstyle === prefs.penStyle));
   $('#eraserModes').hidden = t !== 'eraser';
   $('#shapeKinds').hidden = t !== 'shape';
   $('#textOpts').hidden = t !== 'text';
@@ -1122,9 +1217,30 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.dataset.color) setColor(b.dataset.color);
   else if (b.dataset.shape) { prefs.shape = b.dataset.shape; savePrefs(); updToolbar(); }
   else if (b.dataset.emode) { prefs.emode = b.dataset.emode; savePrefs(); updToolbar(); }
+  else if (b.dataset.pstyle) { prefs.penStyle = b.dataset.pstyle; savePrefs(); updToolbar(); }
+  else if (b.dataset.smooth) { prefs.smooth = +b.dataset.smooth; savePrefs(); updToolbar(); }
+  else if (b.dataset.preset) {
+    if (presetSaved) { presetSaved = false; return; }
+    prefs.sizes[prefs.tool] = +b.dataset.value; savePrefs(); updToolbar();
+  }
   else if (b.id === 'btnBold') { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing(); }
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
 });
+let presetTimer = 0, presetSaved = false;
+$('#sizePresets').addEventListener('pointerdown', e => {
+  const b = e.target.closest('[data-preset]'); if (!b) return;
+  clearTimeout(presetTimer);
+  presetTimer = setTimeout(() => {
+    const t = prefs.tool, list = [...presetsFor(t)];
+    list[+b.dataset.preset] = prefs.sizes[t];
+    prefs.presets = { ...(prefs.presets || {}), [t]: list };
+    presetSaved = true; savePrefs(); updToolbar();
+    navigator.vibrate?.(15);
+    toast(`Stärke ${prefs.sizes[t]} auf ${['Fein', 'Mittel', 'Dick'][+b.dataset.preset]} gespeichert.`, 2000);
+  }, 550);
+});
+for (const t of ['pointerup', 'pointerleave', 'pointercancel']) $('#sizePresets').addEventListener(t, () => clearTimeout(presetTimer));
+$('#sizePresets').addEventListener('contextmenu', e => e.preventDefault());
 $('#customColor').addEventListener('input', e => setColor(e.target.value));
 $('#sizeRange').addEventListener('input', e => { prefs.sizes[prefs.tool] = +e.target.value; savePrefs(); updToolbar(); });
 $('#textSize').addEventListener('change', e => { prefs.textSize = +e.target.value; savePrefs(); styleEditing(); });
