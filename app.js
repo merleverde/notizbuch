@@ -635,8 +635,8 @@ function toPage(p, cx, cy) {
 const penButton = e => ((e.pointerType === 'pen' || e.pointerType === 'touch') && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32)))
   || (e.pointerType === 'mouse' && (e.button === 2 || (e.buttons & 2)) && navigator.maxTouchPoints > 0);
 /* Samsung-Tablets: Seitentaste über dem Display gedrückt → Chrome meldet „gedrückt“ mit Druck 0.
-   Der Tastenzustand wird nur aus schwebenden Ereignissen (Druck 0) gelesen und gemerkt.
-   Jede Berührung (Druck > 0) bei gemerkter Taste ist eine eigene, kurze Radier-Aktion. */
+   Der Tastenzustand wird nur aus schwebenden Ereignissen (Druck 0) gelesen; jeder neue Druck schaltet
+   zwischen Radierer und Stift um. Wird die Taste beim Aufsetzen noch gehalten, radiert der Stift ebenfalls. */
 const hoverButton = e => e.pointerType === 'pen' && e.pressure === 0 && (e.buttons & 1) === 1;
 let penBtn = false;
 
@@ -645,7 +645,7 @@ function penBtnHandler(e) {
   if (e.type === 'pointerout') { if (!e.relatedTarget) penBtn = false; return false; }
   if (e.pressure === 0 && (e.type === 'pointermove' || e.type === 'pointerdown')) {
     const now = (e.buttons & 1) === 1;
-    if (now && !penBtn && prefs.btnToggle) toggleEraser();
+    if (now && !penBtn) toggleEraser();
     penBtn = now;
   }
   const btnAct = act && act.tool === 'btnErase';
@@ -666,7 +666,7 @@ function penBtnHandler(e) {
   }
   return false;
 }
-/* Einstellung „dauerhaft umschalten“: jeder Tastendruck wechselt zwischen Radierer und vorherigem Werkzeug */
+/* S-Pen-Taste: jeder Druck wechselt zwischen Radierer und vorherigem Werkzeug */
 let toolBeforeEraser = 'pen', lastToggle = 0;
 function toggleEraser() {
   const t = performance.now();
@@ -1103,7 +1103,6 @@ function updToolbar() {
   $('#btnBold').classList.toggle('active', prefs.bold);
   $('#customColor').value = /^#[0-9a-f]{6}$/i.test(prefs.color) ? prefs.color : '#000000';
   $('#optFinger').checked = prefs.finger;
-  $('#optBtnToggle').checked = !!prefs.btnToggle;
   $('#optEditable').checked = prefs.editable;
 }
 function setTool(t) {
@@ -1171,7 +1170,6 @@ for (const t of ['pointerdown', 'pointerup', 'pointermove', 'pointercancel', 'co
   window.addEventListener(t, logPen, true);
 $('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true; });
 $('#optFinger').addEventListener('change', e => { prefs.finger = e.target.checked; savePrefs(); toast(prefs.finger ? 'Finger zeichnet jetzt. Scrollen mit zwei Fingern.' : 'Finger scrollt, nur der Stift zeichnet.'); });
-$('#optBtnToggle').addEventListener('change', e => { prefs.btnToggle = e.target.checked; savePrefs(); toast(prefs.btnToggle ? 'S-Pen-Taste schaltet jetzt zwischen Stift und Radierer um.' : 'S-Pen-Taste radiert nur, solange du sie gedrückt hältst.', 3500); });
 $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.checked; savePrefs(); });
 
 function addPage() {

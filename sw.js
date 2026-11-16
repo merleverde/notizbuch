@@ -1,5 +1,5 @@
 // Offline-Cache: erst Netzwerk (damit Updates sofort ankommen), sonst Cache.
-const CACHE = 'notizbuch-v6';
+const CACHE = 'notizbuch-v7';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-maskable.svg',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js'];
 
