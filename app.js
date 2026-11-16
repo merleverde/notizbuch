@@ -111,8 +111,9 @@ function drawStroke(ctx, it) {
   ctx.save();
   ctx.strokeStyle = ctx.fillStyle = it.color;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  if (it.tool === 'marker') {
-    ctx.globalAlpha = 0.38; ctx.lineWidth = it.size;
+  if (it.tool === 'marker' || it.tool === 'cover') {
+    // Textmarker halbtransparent; Abdecken = deckend in Papierweiß
+    ctx.globalAlpha = it.tool === 'marker' ? 0.38 : 1; ctx.lineWidth = it.size;
     ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
     if (n === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
     for (let i = 1; i < n - 1; i++) {
@@ -168,12 +169,12 @@ function getImg(src, cb) {
 }
 const loadImages = items => Promise.all(items.filter(i => i.t === 'img').map(i => new Promise(res => { if (getImg(i.src, res)) res(); })));
 
+/* In Zeichenreihenfolge malen: so liegt Abdeck-Weiß über altem Inhalt und neue Schrift darüber */
 function drawItems(ctx, items, onImg) {
-  for (const it of items) if (it.t === 'img') { const im = getImg(it.src, onImg); if (im) ctx.drawImage(im, it.x, it.y, it.w, it.h); }
-  for (const it of items) if (it.t === 'stroke' && it.tool === 'marker') drawStroke(ctx, it);
   for (const it of items) {
-    if (it.t === 'shape') drawShape(ctx, it);
-    else if (it.t === 'stroke' && it.tool !== 'marker') drawStroke(ctx, it);
+    if (it.t === 'img') { const im = getImg(it.src, onImg); if (im) ctx.drawImage(im, it.x, it.y, it.w, it.h); }
+    else if (it.t === 'shape') drawShape(ctx, it);
+    else if (it.t === 'stroke') drawStroke(ctx, it);
   }
 }
 
@@ -533,13 +534,32 @@ async function buildPdf() {
       : { x: cb.x, y: cb.y, width: W, height: H };
     pg.drawImage(img, o);
   }
+  out.setTitle(S.note.title || 'Notiz');
   if (prefs.editable) {
-    const data = new TextEncoder().encode(JSON.stringify({ app: 'notizbuch', version: 1, title: S.note.title, pages: S.note.pages }));
+    // Fingerabdruck der fertigen Seiten: verrät später, ob eine andere App die Datei verändert hat
+    const sig = pdfSignature(await PDFDocument.load(await out.save()));
+    const data = new TextEncoder().encode(JSON.stringify({ app: 'notizbuch', version: 1, sig, title: S.note.title, pages: S.note.pages }));
     await out.attach(data, DATA_NAME, { mimeType: 'application/json', description: 'Bearbeitbare Schrift (Notizbuch-App)' });
     if (S.origBytes) await out.attach(S.origBytes, ORIG_NAME, { mimeType: 'application/pdf', description: 'Original ohne Anmerkungen (Notizbuch-App)' });
   }
-  out.setTitle(S.note.title || 'Notiz');
   return out.save();
+}
+
+/* Pro Seite: Prüfsumme der Seiteninhalte + Anzahl Anmerkungen */
+function pdfSignature(doc) {
+  const { PDFArray, PDFRef, PDFRawStream } = PDFLib;
+  const fnv = (h, b) => { for (let i = 0; i < b.length; i++) { h ^= b[i]; h = Math.imul(h, 16777619) >>> 0; } return h; };
+  return doc.getPages().map(pg => {
+    let h = 2166136261;
+    const c = pg.node.Contents();
+    for (let part of c instanceof PDFArray ? c.asArray() : c ? [c] : []) {
+      if (part instanceof PDFRef) part = doc.context.lookup(part);
+      if (part instanceof PDFRawStream) h = fnv(h, part.contents);
+      else if (part && part.getContents) h = fnv(h, part.getContents());
+    }
+    const an = pg.node.Annots();
+    return h.toString(36) + '.' + (an ? an.size() : 0);
+  }).join('|');
 }
 
 function downloadBytes(bytes, name) {
@@ -611,14 +631,14 @@ function toPage(p, cx, cy) {
 }
 /* S-Pen-Seitentaste: Chrome meldet sie je nach Gerät als rechte Taste (2), als Radierer-Taste (5/32)
    oder sogar als Maus mit rechter Taste. Alles davon schaltet auf Radierer. */
-const penButton = e => (e.pointerType === 'pen' && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32)))
+const penButton = e => ((e.pointerType === 'pen' || e.pointerType === 'touch') && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32)))
   || (e.pointerType === 'mouse' && (e.button === 2 || (e.buttons & 2)) && navigator.maxTouchPoints > 0);
 
 function onDown(e) {
   if (e.target.closest('.tx.editing, .selbox')) return;
   if (S.editing) commitText();
   hidePops();
-  if (e.pointerType === 'touch' && !prefs.finger) {
+  if (e.pointerType === 'touch' && !prefs.finger && !penButton(e)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = [...touches.values()];
     if (pts.length === 1) gest = { type: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false };
@@ -678,7 +698,11 @@ function startAct(tool, p, e, extra = {}) {
   const [x, y] = toPageA(e.clientX, e.clientY);
   Object.assign(act, { x0: x, y0: y, x, y });
   if (tool !== 'move' && tool !== 'scale' && tool !== 'text') act.ctx = prepLive(pe, p);
-  if (tool === 'pen' || tool === 'marker') {
+  if (tool === 'eraser' && prefs.emode === 'cover') {
+    act.tool = 'cover';
+    act.item = { t: 'stroke', id: uid(), tool: 'cover', color: '#ffffff', size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
+    addPts(e);
+  } else if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
     addPts(e); holdCheck(x, y);
   } else if (tool === 'eraser') {
@@ -743,6 +767,11 @@ function addPts(e) {
   }
   if (it.tool === 'marker') { ctx.clearRect(0, 0, act.p.w, act.p.h); drawStroke(ctx, it); }
   const last = it.pts[it.pts.length - 1];
+  if (it.tool === 'cover') {
+    ctx.clearRect(0, 0, act.p.w, act.p.h); drawStroke(ctx, it);
+    if (last) { ctx.save(); ctx.strokeStyle = '#2f5d50'; ctx.lineWidth = 1.2 / k; ctx.beginPath(); ctx.arc(last[0], last[1], it.size / 2, 0, 7); ctx.stroke(); ctx.restore(); }
+    return;
+  }
   if (last) holdCheck(last[0], last[1]);
 }
 function drawEraser(x, y) {
@@ -786,9 +815,13 @@ function moveAct(e) {
     clearTimeout(act.hold?.t);
     if (act.item.pts.length && !act.recog) { act.p.items.push(act.item); renderInk(act.pe, act.p); }
     act.tool = 'eraser'; act.recog = null;
+    if (prefs.emode === 'cover') {
+      act.tool = 'cover';
+      act.item = { t: 'stroke', id: uid(), tool: 'cover', color: '#ffffff', size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
+    }
   }
   const t = act.tool, ctx = act.ctx;
-  if (t === 'pen' || t === 'marker') addPts(e);
+  if (t === 'pen' || t === 'marker' || t === 'cover') addPts(e);
   else if (t === 'eraser') { eraseAt(x, y); drawEraser(x, y); }
   else if (t === 'lasso') {
     act.poly.push([x, y]);
@@ -824,7 +857,7 @@ function endAct(e) {
     const r = a.recog;
     p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
-  } else if (tool === 'pen' || tool === 'marker') {
+  } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
     if (a.item.pts.length) p.items.push(a.item);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
   } else if (tool === 'eraser') {
@@ -1176,13 +1209,17 @@ async function importPdf(file, handle) {
   try { doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise; }
   catch (e) { return toast('Diese Datei ist keine lesbare PDF: ' + e.message, 6000); }
   // Bearbeitbare Ebene aus einer früher gespeicherten Datei wiederherstellen
-  let restored = null, orig = bytes;
+  let restored = null, orig = bytes, foreign = false;
   try {
     const att = Object.values((await doc.getAttachments()) || {});
     const j = att.find(a => a.filename === DATA_NAME), o = att.find(a => a.filename === ORIG_NAME);
     if (j) {
       const data = JSON.parse(new TextDecoder().decode(j.content));
-      if (data.app === 'notizbuch' && Array.isArray(data.pages)) { restored = data; orig = o ? new Uint8Array(o.content) : null; }
+      if (data.app === 'notizbuch' && Array.isArray(data.pages)) {
+        // Wurde die Datei inzwischen in einer anderen App verändert? Dann gilt der aktuelle Dateiinhalt.
+        if (data.sig && pdfSignature(await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true })) !== data.sig) foreign = true;
+        else { restored = data; orig = o ? new Uint8Array(o.content) : null; }
+      }
     }
   } catch {}
   let pages;
@@ -1218,6 +1255,7 @@ async function importPdf(file, handle) {
   await dbPut('notes', note);
   await openNote(note);
   if (restored) toast('Deine Schrift ist wieder bearbeitbar.');
+  else if (foreign) toast('Diese PDF wurde in einer anderen App verändert. Du siehst den aktuellen Stand. Ältere Schrift lässt sich nur noch mit „Abdecken“ entfernen.', 8000);
   else if (!handle) toast('Die Datei ist nur als Kopie geöffnet. „Speichern“ fragt nach einem Speicherort.', 5000);
 }
 async function openPdfFlow() {
