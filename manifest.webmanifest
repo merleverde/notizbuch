@@ -1,0 +1,19 @@
+{
+  "name": "Notizbuch",
+  "short_name": "Notizbuch",
+  "description": "Handschriftliche Notizen und PDF-Anmerkungen mit dem Stift",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f1f2ef",
+  "theme_color": "#2f5d50",
+  "lang": "de",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    { "action": "./", "accept": { "application/pdf": [".pdf"] } }
+  ]
+}
