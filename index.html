@@ -100,6 +100,7 @@
     <div id="shapeKinds" class="seg" hidden>
       <button data-shape="rect" title="Rechteck"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
       <button data-shape="ellipse" title="Ellipse"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+      <button data-shape="triangle" title="Dreieck"><svg viewBox="0 0 24 24"><path d="M12 4l8.5 15h-17z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
       <button data-shape="line" title="Linie"><svg viewBox="0 0 24 24"><path d="M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
       <button data-shape="arrow" title="Pfeil"><svg viewBox="0 0 24 24"><path d="M5 19L19 5M11 5h8v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
@@ -123,6 +124,7 @@
     <hr>
     <label class="check"><input type="checkbox" id="optFinger"> Mit dem Finger zeichnen</label>
     <button data-m="zoomReset">Zoom zurücksetzen</button>
+    <button data-m="penTest">Stift-Tasten testen</button>
   </div>
 </section>
 
@@ -168,6 +170,11 @@
 
 <input type="file" id="filePdf" accept="application/pdf,.pdf" hidden>
 <input type="file" id="fileImg" accept="image/*" hidden>
+<div id="penTest" class="pen-test" hidden>
+  <div class="pen-test-head"><b>Stift-Test</b><button id="penTestClose" class="btn">Schließen</button></div>
+  <p>Tippe mit dem Stift auf die Seite, einmal normal und einmal mit gedrückter Seitentaste. Mach dann einen Screenshot davon.</p>
+  <pre id="penLog"></pre>
+</div>
 <div id="toast" class="toast" role="status" hidden></div>
 
 <script src="vendor/pdf.min.js"></script>

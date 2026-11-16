@@ -141,7 +141,8 @@ function drawShape(ctx, it) {
   ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const { x1, y1, x2, y2 } = it;
   ctx.beginPath();
-  if (it.kind === 'rect') ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+  if (it.kind === 'poly') { it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
+  else if (it.kind === 'rect') ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
   else if (it.kind === 'ellipse') ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2);
   else {
     ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
@@ -208,6 +209,11 @@ function bbox(it) {
     for (const [x, y] of it.pts) { a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); }
     const m = it.size / 2; return { x: a - m, y: b - m, w: c - a + 2 * m, h: d - b + 2 * m };
   }
+  if (it.t === 'shape' && it.kind === 'poly') {
+    const xs = it.pts.map(p => p[0]), ys = it.pts.map(p => p[1]), m = it.size / 2;
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { x: x - m, y: y - m, w: Math.max(...xs) - x + 2 * m, h: Math.max(...ys) - y + 2 * m };
+  }
   if (it.t === 'shape') {
     const m = it.size / 2;
     return { x: Math.min(it.x1, it.x2) - m, y: Math.min(it.y1, it.y2) - m, w: Math.abs(it.x2 - it.x1) + 2 * m, h: Math.abs(it.y2 - it.y1) + 2 * m };
@@ -222,6 +228,7 @@ function unionBox(bs) {
 const inBox = (b, x, y, m = 0) => x >= b.x - m && x <= b.x + b.w + m && y >= b.y - m && y <= b.y + b.h + m;
 
 function shapeOutline(it) {
+  if (it.kind === 'poly') return [...it.pts, it.pts[0]];
   const { x1, y1, x2, y2 } = it;
   if (it.kind === 'rect') return [[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]];
   if (it.kind === 'ellipse') {
@@ -249,9 +256,77 @@ function hitItem(it, x, y, r) {
 function xform(src, fn, k) {
   const it = structuredClone(src);
   if (it.t === 'stroke') { it.pts = it.pts.map(([x, y, pr]) => { const [a, b] = fn(x, y); return [+a.toFixed(2), +b.toFixed(2), pr]; }); it.size *= k; }
+  else if (it.t === 'shape' && it.kind === 'poly') { it.pts = it.pts.map(([x, y]) => fn(x, y)); it.size *= k; }
   else if (it.t === 'shape') { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); it.size *= k; }
   else { [it.x, it.y] = fn(it.x, it.y); it.w *= k; if (it.t === 'img') it.h *= k; else { it.size *= k; if (it.h) it.h *= k; } }
   return it;
+}
+
+/* ---------------- Formerkennung (Stift am Ende kurz halten) ---------------- */
+function rdp(P, eps) {
+  if (P.length < 3) return P;
+  const [ax, ay] = P[0], [bx, by] = P[P.length - 1];
+  let md = 0, mi = 0;
+  for (let i = 1; i < P.length - 1; i++) { const d = segDist(P[i][0], P[i][1], ax, ay, bx, by); if (d > md) { md = d; mi = i; } }
+  if (md <= eps) return [P[0], P[P.length - 1]];
+  return [...rdp(P.slice(0, mi + 1), eps).slice(0, -1), ...rdp(P.slice(mi), eps)];
+}
+/* Gerade auf 0°/45°/90° einrasten, wenn sie fast so liegt */
+function snapLine(x1, y1, x2, y2) {
+  const a = Math.atan2(y2 - y1, x2 - x1), L = Math.hypot(x2 - x1, y2 - y1), s = Math.PI / 4;
+  const r = Math.round(a / s) * s;
+  return Math.abs(a - r) < 0.09 ? [x1 + L * Math.cos(r), y1 + L * Math.sin(r)] : [x2, y2];
+}
+function recognizeShape(pts) {
+  const P = pts.map(p => [p[0], p[1]]), n = P.length;
+  if (n < 4) return null;
+  let len = 0; for (let i = 1; i < n; i++) len += Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]);
+  const xs = P.map(p => p[0]), ys = P.map(p => p[1]);
+  const bx = Math.min(...xs), by = Math.min(...ys), bw = Math.max(...xs) - bx, bh = Math.max(...ys) - by, size = Math.max(bw, bh);
+  if (size < 10) return null;
+  const chord = Math.hypot(P[n - 1][0] - P[0][0], P[n - 1][1] - P[0][1]);
+  if (chord / len > 0.9) {
+    const [x2, y2] = snapLine(P[0][0], P[0][1], P[n - 1][0], P[n - 1][1]);
+    return { kind: 'line', x1: P[0][0], y1: P[0][1], x2, y2 };
+  }
+  if (chord > Math.max(0.3 * size, 14)) return null;              // offene Kurve: nichts erkennen
+  // Ecken suchen: vereinfachen, dann fast gerade Knicke und zu nahe Punkte entfernen
+  let C = rdp([...P, P[0]], size * 0.07).slice(0, -1);
+  for (let changed = true; changed && C.length > 2;) {
+    changed = false;
+    for (let i = 0; i < C.length; i++) {
+      const a = C[(i - 1 + C.length) % C.length], b = C[i], c = C[(i + 1) % C.length];
+      const v1 = [a[0] - b[0], a[1] - b[1]], v2 = [c[0] - b[0], c[1] - b[1]];
+      const l1 = Math.hypot(...v1), l2 = Math.hypot(...v2);
+      const ang = Math.acos(clamp((v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2 || 1), -1, 1));
+      if (ang > 2.6 || l1 < size * 0.12) { C.splice(i, 1); changed = true; break; }
+    }
+  }
+  const polyErr = poly => {
+    let s = 0; const o = [...poly, poly[0]];
+    for (const [x, y] of P) { let d = Infinity; for (let i = 1; i < o.length; i++) d = Math.min(d, segDist(x, y, o[i - 1][0], o[i - 1][1], o[i][0], o[i][1])); s += d; }
+    return s / n / size;
+  };
+  const cx = bx + bw / 2, cy = by + bh / 2, rx = Math.max(bw / 2, 1), ry = Math.max(bh / 2, 1);
+  let eErr = 0; for (const [x, y] of P) eErr += Math.abs(Math.hypot((x - cx) / rx, (y - cy) / ry) - 1);
+  eErr = eErr / n * ((rx + ry) / 2) / size;
+  const cands = [{ err: eErr, kind: 'ellipse' }];
+  if (C.length === 3 || C.length === 4) cands.push({ err: polyErr(C), kind: 'poly' });
+  const best = cands.sort((a, b) => a.err - b.err)[0];
+  if (best.err > 0.07) return null;
+  if (best.kind === 'ellipse') {
+    if (Math.abs(bw - bh) < 0.15 * size) { const d = (bw + bh) / 2; return { kind: 'ellipse', x1: cx - d / 2, y1: cy - d / 2, x2: cx + d / 2, y2: cy + d / 2 }; }
+    return { kind: 'ellipse', x1: bx, y1: by, x2: bx + bw, y2: by + bh };
+  }
+  if (C.length === 4) {
+    // fast achsenparalleles Viereck → sauberes Rechteck
+    const axis = C.every((p, i) => { const q = C[(i + 1) % 4], a = Math.abs(Math.atan2(q[1] - p[1], q[0] - p[0])) % (Math.PI / 2); return a < 0.26 || a > Math.PI / 2 - 0.26; });
+    if (axis) {
+      const qx = C.map(p => p[0]).sort((a, b) => a - b), qy = C.map(p => p[1]).sort((a, b) => a - b);
+      return { kind: 'rect', x1: (qx[0] + qx[1]) / 2, y1: (qy[0] + qy[1]) / 2, x2: (qx[2] + qx[3]) / 2, y2: (qy[2] + qy[3]) / 2 };
+    }
+  }
+  return { kind: 'poly', pts: C.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2)]) };
 }
 
 /* ---------------- Seiten im Editor ---------------- */
@@ -534,7 +609,10 @@ function toPage(p, cx, cy) {
   const r = pageEls.get(p.id).el.getBoundingClientRect(), k = r.width / p.w;
   return [(cx - r.left) / k, (cy - r.top) / k];
 }
-const penButton = e => e.pointerType === 'pen' && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32));
+/* S-Pen-Seitentaste: Chrome meldet sie je nach Gerät als rechte Taste (2), als Radierer-Taste (5/32)
+   oder sogar als Maus mit rechter Taste. Alles davon schaltet auf Radierer. */
+const penButton = e => (e.pointerType === 'pen' && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32)))
+  || (e.pointerType === 'mouse' && (e.button === 2 || (e.buttons & 2)) && navigator.maxTouchPoints > 0);
 
 function onDown(e) {
   if (e.target.closest('.tx.editing, .selbox')) return;
@@ -547,7 +625,7 @@ function onDown(e) {
     else if (pts.length === 2) { gest = { type: 'pinch', d0: dist(pts[0], pts[1]) || 1, z0: S.zoom }; }
     return;
   }
-  if (act || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  if (act || (e.pointerType === 'mouse' && e.button !== 0 && !penButton(e))) return;
   const p = pageAt(e.clientX, e.clientY);
   const tool = penButton(e) ? 'eraser' : prefs.tool;
   if (!p) { if (tool === 'lasso') setSel(null); return; }
@@ -602,7 +680,7 @@ function startAct(tool, p, e, extra = {}) {
   if (tool !== 'move' && tool !== 'scale' && tool !== 'text') act.ctx = prepLive(pe, p);
   if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
-    addPts(e);
+    addPts(e); holdCheck(x, y);
   } else if (tool === 'eraser') {
     eraseAt(x, y); drawEraser(x, y);
   } else if (tool === 'lasso') {
@@ -610,8 +688,46 @@ function startAct(tool, p, e, extra = {}) {
     act.poly = [[x, y]];
   }
 }
+/* Stift bleibt am Strichende ~0,6 s ruhig → Strich in Linie/Form umwandeln */
+function holdCheck(x, y) {
+  const h = act.hold;
+  if (act.recog || (h && Math.hypot(x - h.x, y - h.y) * act.k < 6)) return;
+  if (h) clearTimeout(h.t);
+  const a = act;
+  act.hold = { x, y, t: setTimeout(() => onHold(a), 600) };
+}
+function onHold(a) {
+  if (act !== a || a.recog) return;
+  const pts = a.item.pts;
+  if (a.tool === 'marker') {
+    if (pts.length < 3) return;
+    const [x2, y2] = snapLine(pts[0][0], pts[0][1], pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    a.recog = { kind: 'markerLine', x1: pts[0][0], y1: pts[0][1], x2, y2 };
+  } else {
+    const s = recognizeShape(pts);
+    if (!s) return;
+    a.recog = { t: 'shape', id: uid(), ...s, color: a.item.color, size: +(a.item.size * 0.85).toFixed(2) };
+  }
+  navigator.vibrate?.(12);
+  drawRecog(a);
+}
+function drawRecog(a) {
+  const ctx = a.ctx, r = a.recog;
+  ctx.clearRect(0, 0, a.p.w, a.p.h);
+  if (r.kind === 'markerLine') drawStroke(ctx, { ...a.item, pts: [[r.x1, r.y1, .5], [r.x2, r.y2, .5]] });
+  else drawShape(ctx, r);
+}
 function addPts(e) {
   const it = act.item, ctx = act.ctx, k = act.k;
+  if (act.recog) {
+    // Nach dem Erkennen folgt das Linienende weiter dem Stift
+    const r = act.recog;
+    if (r.kind === 'line' || r.kind === 'markerLine') {
+      const [x, y] = toPageA(e.clientX, e.clientY);
+      [r.x2, r.y2] = snapLine(r.x1, r.y1, x, y); drawRecog(act);
+    }
+    return;
+  }
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
   for (const ev of evs) {
     const [x, y] = toPageA(ev.clientX, ev.clientY);
@@ -626,6 +742,8 @@ function addPts(e) {
     }
   }
   if (it.tool === 'marker') { ctx.clearRect(0, 0, act.p.w, act.p.h); drawStroke(ctx, it); }
+  const last = it.pts[it.pts.length - 1];
+  if (last) holdCheck(last[0], last[1]);
 }
 function drawEraser(x, y) {
   const ctx = act.ctx; ctx.clearRect(0, 0, act.p.w, act.p.h);
@@ -663,6 +781,12 @@ function eraseAt(x, y) {
 function moveAct(e) {
   const [x, y] = toPageA(e.clientX, e.clientY);
   act.x = x; act.y = y;
+  // Seitentaste erst während des Schreibens gedrückt → ab hier radieren
+  if ((act.tool === 'pen' || act.tool === 'marker') && penButton(e)) {
+    clearTimeout(act.hold?.t);
+    if (act.item.pts.length && !act.recog) { act.p.items.push(act.item); renderInk(act.pe, act.p); }
+    act.tool = 'eraser'; act.recog = null;
+  }
   const t = act.tool, ctx = act.ctx;
   if (t === 'pen' || t === 'marker') addPts(e);
   else if (t === 'eraser') { eraseAt(x, y); drawEraser(x, y); }
@@ -685,12 +809,22 @@ function moveAct(e) {
   }
 }
 function shapeFromAct(a = act) {
-  return { t: 'shape', id: uid(), kind: prefs.shape, x1: a.x0, y1: a.y0, x2: a.x, y2: a.y, color: prefs.color, size: prefs.sizes.shape };
+  const base = { t: 'shape', id: uid(), color: prefs.color, size: prefs.sizes.shape };
+  if (prefs.shape === 'triangle') {
+    const y1 = Math.min(a.y0, a.y), y2 = Math.max(a.y0, a.y);
+    return { ...base, kind: 'poly', pts: [[(a.x0 + a.x) / 2, y1], [Math.max(a.x0, a.x), y2], [Math.min(a.x0, a.x), y2]] };
+  }
+  return { ...base, kind: prefs.shape, x1: a.x0, y1: a.y0, x2: a.x, y2: a.y };
 }
 function endAct(e) {
   const a = act; act = null;
   const { p, pe, tool } = a;
-  if (tool === 'pen' || tool === 'marker') {
+  clearTimeout(a.hold?.t);
+  if ((tool === 'pen' || tool === 'marker') && a.recog) {
+    const r = a.recog;
+    p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
+    renderInk(pe, p); clearLive(pe); commit(p, a.before);
+  } else if (tool === 'pen' || tool === 'marker') {
     if (a.item.pts.length) p.items.push(a.item);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
   } else if (tool === 'eraser') {
@@ -913,7 +1047,23 @@ $('#menuPop').addEventListener('click', async e => {
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
+  else if (m === 'penTest') { penLog.length = 0; $('#penLog').textContent = 'Warte auf Stift …'; $('#penTest').hidden = false; }
 });
+
+/* Stift-Test: zeigt, wie Chrome die S-Pen-Tasten meldet (zur Fehlersuche) */
+const penLog = [];
+let lastButtons = -1;
+function logPen(e) {
+  if ($('#penTest').hidden) return;
+  if (e.type === 'pointermove' && e.buttons === lastButtons) return;
+  lastButtons = e.buttons ?? -1;
+  penLog.unshift(`${e.type.replace('pointer', '')}  typ=${e.pointerType ?? '-'}  taste=${e.button ?? '-'}  tasten=${e.buttons ?? '-'}  druck=${(e.pressure ?? 0).toFixed(2)}  → ${penButton(e) ? 'RADIERER' : 'normal'}`);
+  penLog.length = Math.min(penLog.length, 12);
+  $('#penLog').textContent = penLog.join('\n');
+}
+for (const t of ['pointerdown', 'pointerup', 'pointermove', 'pointercancel', 'contextmenu', 'auxclick'])
+  window.addEventListener(t, logPen, true);
+$('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true; });
 $('#optFinger').addEventListener('change', e => { prefs.finger = e.target.checked; savePrefs(); toast(prefs.finger ? 'Finger zeichnet jetzt. Scrollen mit zwei Fingern.' : 'Finger scrollt, nur der Stift zeichnet.'); });
 $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.checked; savePrefs(); });
 
