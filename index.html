@@ -20,6 +20,7 @@
       <h1>Notizbuch</h1>
     </div>
     <div class="lib-actions">
+      <button id="btnBackup" class="btn" title="Alle Notizen sichern oder wiederherstellen">Sicherung</button>
       <button id="btnOpenPdf" class="btn">PDF öffnen</button>
       <button id="btnNewNote" class="btn primary">Neue Notiz</button>
     </div>
@@ -102,6 +103,9 @@
       <span class="size-dot" id="sizeDot"></span>
       <input type="range" id="sizeRange" aria-label="Stärke">
     </div>
+    <div id="rulerBox" class="seg" hidden>
+      <button id="btnRuler" title="Lineal: jeder Strich wird eine gerade Linie">Lineal</button>
+    </div>
     <div id="eraserModes" class="seg" hidden>
       <button data-emode="area" title="Nur den Bereich unter dem Radierer löschen">Bereich</button>
       <button data-emode="stroke" title="Ganze Striche löschen">Ganze Striche</button>
@@ -113,6 +117,8 @@
       <button data-shape="triangle" title="Dreieck"><svg viewBox="0 0 24 24"><path d="M12 4l8.5 15h-17z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
       <button data-shape="line" title="Linie"><svg viewBox="0 0 24 24"><path d="M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
       <button data-shape="arrow" title="Pfeil"><svg viewBox="0 0 24 24"><path d="M5 19L19 5M11 5h8v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button id="btnFill" title="Füllung der Form: aus, hell oder voll">Füllung: aus</button>
+      <button id="btnDash" title="Gestrichelte Linie">Gestrichelt</button>
     </div>
     <div id="textOpts" class="seg" hidden>
       <select id="textSize" aria-label="Schriftgröße">
@@ -146,12 +152,14 @@
     <button data-m="addPage">Seite einfügen</button>
     <button data-m="dupPage">Aktuelle Seite duplizieren</button>
     <button data-m="bgPage">Hintergrund ändern …</button>
+    <button data-m="paste">Einfügen</button>
     <button data-m="delPage">Aktuelle Seite löschen</button>
     <hr>
     <button data-m="saveAs">Speichern unter …</button>
     <label class="check"><input type="checkbox" id="optEditable"> Schrift in der PDF bearbeitbar halten</label>
     <hr>
     <label class="check"><input type="checkbox" id="optFinger"> Mit dem Finger zeichnen</label>
+    <label class="check"><input type="checkbox" id="optScribble"> Kritzeln löscht Geschriebenes</label>
     <label class="check">Striche glätten
       <select id="optSmooth" aria-label="Striche glätten">
         <option value="0">Aus</option><option value="1">Mittel</option><option value="2">Stark</option>
@@ -202,6 +210,21 @@
   </form>
 </dialog>
 
+<div id="stylePop" class="popover style-pop" hidden aria-label="Stil ändern">
+  <div class="style-title">Farbe</div>
+  <div class="style-colors"><div id="styleSwatches" class="swatches"></div>
+    <label class="custom-color" title="Eigene Farbe"><input type="color" id="styleColor" value="#1b1f24"><span>+</span></label></div>
+  <div id="styleSizeRow">
+    <div class="style-title">Strichstärke <output id="styleSizeVal"></output></div>
+    <input type="range" id="styleSize" min="0.5" max="20" step="0.5" aria-label="Strichstärke">
+  </div>
+</div>
+
+<div id="backupPop" class="popover" hidden>
+  <button data-b="save"><span><b>Sicherung erstellen …</b><br><small>Alle Notizen in eine Datei, z. B. in Nextcloud</small></span></button>
+  <button data-b="load"><span><b>Sicherung wiederherstellen …</b><br><small>Notizen aus einer Sicherungsdatei laden</small></span></button>
+</div>
+
 <div id="cardPop" class="popover" hidden>
   <button data-c="rename">Umbenennen</button>
   <button data-c="move">In Ordner verschieben</button>
@@ -242,6 +265,7 @@
   <div class="dlg-actions"><button data-choice="cancel" class="btn">Weiter bearbeiten</button></div>
 </dialog>
 
+<input type="file" id="fileBackup" accept="application/json,.json" hidden>
 <input type="file" id="filePdf" accept="application/pdf,.pdf" hidden>
 <input type="file" id="fileImg" accept="image/*" hidden>
 <div id="penTest" class="pen-test" hidden>

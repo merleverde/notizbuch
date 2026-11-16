@@ -187,10 +187,12 @@ function drawStroke(ctx, it) {
   ctx.restore();
 }
 
+const closedShape = it => it.kind === 'rect' || it.kind === 'ellipse' || it.kind === 'poly';
 function drawShape(ctx, it) {
   ctx.save();
   ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const { x1, y1, x2, y2 } = it;
+  if (it.dash) ctx.setLineDash([Math.max(3, it.size * 3), Math.max(3, it.size * 2.5)]);
   ctx.beginPath();
   if (it.kind === 'poly') { it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
   else if (it.kind === 'rect') ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
@@ -203,6 +205,7 @@ function drawShape(ctx, it) {
       ctx.lineTo(x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45));
     }
   }
+  if (it.fill && closedShape(it)) { ctx.fillStyle = it.fill; ctx.fill(); }
   ctx.stroke(); ctx.restore();
 }
 
@@ -222,7 +225,11 @@ const loadImages = items => Promise.all(items.filter(i => i.t === 'img').map(i =
 /* In Zeichenreihenfolge malen: so liegt Abdeck-Weiß über altem Inhalt und neue Schrift darüber */
 function drawItems(ctx, items, onImg) {
   for (const it of items) {
-    if (it.t === 'img') { const im = getImg(it.src, onImg); if (im) ctx.drawImage(im, it.x, it.y, it.w, it.h); }
+    if (it.t === 'img') {
+      const im = getImg(it.src, onImg); if (!im) continue;
+      if (it.rot) { ctx.save(); ctx.translate(it.x + it.w / 2, it.y + it.h / 2); ctx.rotate(it.rot); ctx.drawImage(im, -it.w / 2, -it.h / 2, it.w, it.h); ctx.restore(); }
+      else ctx.drawImage(im, it.x, it.y, it.w, it.h);
+    }
     else if (it.t === 'shape') drawShape(ctx, it);
     else if (it.t === 'stroke') drawStroke(ctx, it);
   }
@@ -270,6 +277,10 @@ function bbox(it) {
     return { x: Math.min(it.x1, it.x2) - m, y: Math.min(it.y1, it.y2) - m, w: Math.abs(it.x2 - it.x1) + 2 * m, h: Math.abs(it.y2 - it.y1) + 2 * m };
   }
   if (it.t === 'text') return { x: it.x, y: it.y, w: it.w, h: it.h || it.size * 1.35 };
+  if (it.rot) {
+    const c = Math.abs(Math.cos(it.rot)), s = Math.abs(Math.sin(it.rot)), w = it.w * c + it.h * s, h = it.w * s + it.h * c;
+    return { x: it.x + it.w / 2 - w / 2, y: it.y + it.h / 2 - h / 2, w, h };
+  }
   return { x: it.x, y: it.y, w: it.w, h: it.h };
 }
 function unionBox(bs) {
@@ -299,17 +310,31 @@ function hitItem(it, x, y, r) {
   }
   if (it.t === 'shape') {
     const o = shapeOutline(it);
+    if (it.fill && closedShape(it) && inPoly(x, y, o)) return true;      // gefüllte Formen auch innen treffen
     for (let i = 1; i < o.length; i++) if (segDist(x, y, o[i - 1][0], o[i - 1][1], o[i][0], o[i][1]) < r + it.size / 2) return true;
     return false;
   }
   return inBox(bbox(it), x, y);
 }
-function xform(src, fn, k) {
+/* Element verschieben/skalieren (fn, k) und optional um da drehen (fn enthält dann die Drehung) */
+function xform(src, fn, k, da = 0) {
   const it = structuredClone(src);
   if (it.t === 'stroke') { it.pts = it.pts.map(([x, y, pr]) => { const [a, b] = fn(x, y); return [+a.toFixed(2), +b.toFixed(2), pr]; }); it.size *= k; }
-  else if (it.t === 'shape' && it.kind === 'poly') { it.pts = it.pts.map(([x, y]) => fn(x, y)); it.size *= k; }
-  else if (it.t === 'shape') { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); it.size *= k; }
-  else { [it.x, it.y] = fn(it.x, it.y); it.w *= k; if (it.t === 'img') it.h *= k; else { it.size *= k; if (it.h) it.h *= k; } }
+  else if (it.t === 'shape') {
+    // Rechteck/Ellipse lassen sich nur als Vieleck drehen
+    if (da && (it.kind === 'rect' || it.kind === 'ellipse')) { it.pts = shapeOutline(it).slice(0, -1); it.kind = 'poly'; }
+    if (it.kind === 'poly') it.pts = it.pts.map(([x, y]) => fn(x, y).map(v => +v.toFixed(2)));
+    else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); }
+    it.size *= k;
+  } else {
+    // Bild/Text: Mittelpunkt mitführen; Bilder drehen sich mit, Textfelder bleiben gerade
+    const h0 = it.t === 'img' ? it.h : (it.h || it.size * 1.35);
+    const [cx, cy] = fn(it.x + it.w / 2, it.y + h0 / 2);
+    it.w *= k;
+    if (it.t === 'img') { it.h *= k; if (da) it.rot = ((it.rot || 0) + da) % (Math.PI * 2); }
+    else { it.size *= k; if (it.h) it.h *= k; }
+    it.x = cx - it.w / 2; it.y = cy - h0 * k / 2;
+  }
   return it;
 }
 
@@ -750,7 +775,8 @@ function finishBtnPage() {
 }
 
 function onDown(e) {
-  if (e.target.closest('.tx.editing, .selbox')) return;
+  if (e.target.closest('.tx.editing, .selbox, .pastechip')) return;
+  removePasteChip();
   if (S.editing) commitText();
   hidePops();
   // Ein neues Aufsetzen beendet eine hängengebliebene Stift-Aktion (fehlendes pointerup)
@@ -825,7 +851,10 @@ function startAct(tool, p, e, extra = {}) {
   } else if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
     if (tool === 'pen') act.item.style = prefs.penStyle;
-    addPts(e); holdCheck(x, y);
+    addPts(e);
+    // Lineal: der Strich wird von Anfang an als Gerade gezogen
+    if (prefs.ruler) act.recog = { kind: 'markerLine', x1: x, y1: y, x2: x, y2: y };
+    else holdCheck(x, y);
   } else if (tool === 'eraser') {
     eraseAt(x, y); drawEraser(x, y);
   } else if (tool === 'lasso') {
@@ -905,6 +934,43 @@ function addPts(e) {
     return;
   }
   if (last) holdCheck(last[0], last[1]);
+}
+/* Kritzeln zum Löschen: schnelles Hin-und-her über Geschriebenem löscht, was darunter liegt.
+   Erkannt wird ein Zickzack mit mindestens vier langen Richtungswechseln; liegt nichts darunter, bleibt der Strich. */
+function scribbleErase(a) {
+  if (prefs.scribble === false) return false;
+  const P = a.item.pts, n = P.length;
+  if (n < 12) return false;
+  const b = bbox(a.item);
+  const zigzag = ax => {
+    const span = ax ? b.h : b.w;
+    if (span * a.k < 24) return 0;
+    let runs = 0, start = P[0][ax], dir = 0, ext = P[0][ax];
+    for (let i = 1; i < n; i++) {
+      const v = P[i][ax];
+      if (!dir) { if (Math.abs(v - start) > span * 0.15) { dir = Math.sign(v - start); ext = v; } continue; }
+      if ((v - ext) * dir > 0) ext = v;
+      else if ((ext - v) * dir > span * 0.3) {           // deutliche Umkehr: Lauf zählen, wenn er lang genug war
+        if (Math.abs(ext - start) > span * 0.5) runs++;
+        start = ext; ext = v; dir = -dir;
+      }
+    }
+    if (Math.abs(ext - start) > span * 0.5) runs++;
+    return runs;
+  };
+  if (Math.max(zigzag(0), zigzag(1)) < 5) return false;
+  const p = a.p, pad = 2;
+  const inside = (x, y) => x >= b.x - pad && x <= b.x + b.w + pad && y >= b.y - pad && y <= b.y + b.h + pad;
+  const hit = it => {
+    if (it.t === 'stroke') { const k = it.pts.filter(q => inside(q[0], q[1])).length; return k >= Math.max(1, it.pts.length * 0.4); }
+    if (it.t === 'shape') { const s = bbox(it); return inside(s.x + s.w / 2, s.y + s.h / 2) && s.w <= b.w * 1.3 && s.h <= b.h * 1.3; }
+    return false;
+  };
+  const keep = p.items.filter(it => !hit(it));
+  if (keep.length === p.items.length) return false;
+  p.items = keep;
+  navigator.vibrate?.(10);
+  return true;
 }
 /* Abdecken malt in der Papierfarbe der Seite (PDF-Seiten: weiß) */
 const coverColor = p => (p.pdf == null && p.paper) || '#ffffff';
@@ -991,10 +1057,25 @@ function moveAct(e) {
   } else if (t === 'scale') {
     const { ax, ay } = act, f = Math.max(0.08, Math.hypot(x - ax, y - ay) / act.d0);
     applySel((a, b) => [ax + (a - ax) * f, ay + (b - ay) * f], f);
+  } else if (t === 'rotate') {
+    const { cx, cy } = act;
+    let da = Math.atan2(y - cy, x - cx) - act.a0;
+    const q = Math.PI / 4, near = Math.round(da / q) * q;
+    if (Math.abs(da - near) < 0.05) da = near;            // bei 45°-Schritten einrasten
+    const c = Math.cos(da), s = Math.sin(da);
+    applySel((a, b) => [cx + (a - cx) * c - (b - cy) * s, cy + (a - cx) * s + (b - cy) * c], 1, da);
   }
 }
+/* Füllung: 1 = heller Farbton, 2 = volle Farbe */
+const fillFor = (color, mode) => mode === 2 ? color : mode === 1 ? shade(color, 0.3) : null;
 function shapeFromAct(a = act) {
   const base = { t: 'shape', id: uid(), color: prefs.color, size: prefs.sizes.shape };
+  if (prefs.dash) base.dash = true;
+  if (prefs.fill && prefs.shape !== 'line' && prefs.shape !== 'arrow') { base.fillMode = prefs.fill; base.fill = fillFor(prefs.color, prefs.fill); }
+  if (prefs.shape === 'line' || prefs.shape === 'arrow') {
+    const [x2, y2] = snapLine(a.x0, a.y0, a.x, a.y);
+    return { ...base, kind: prefs.shape, x1: a.x0, y1: a.y0, x2, y2 };
+  }
   if (prefs.shape === 'triangle') {
     const y1 = Math.min(a.y0, a.y), y2 = Math.max(a.y0, a.y);
     return { ...base, kind: 'poly', pts: [[(a.x0 + a.x) / 2, y1], [Math.max(a.x0, a.x), y2], [Math.min(a.x0, a.x), y2]] };
@@ -1008,11 +1089,13 @@ function endAct(e) {
   clearTimeout(a.hold?.t);
   if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
-    p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
+    const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
+    if (!tiny) p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
     smoothStroke(a);
-    if (a.item.pts.length) p.items.push(a.item);
+    if (tool === 'pen' && scribbleErase(a)) { /* Kritzeln hat gelöscht, der Kritzelstrich entfällt */ }
+    else if (a.item.pts.length) p.items.push(a.item);
     renderInk(pe, p); clearLive(pe); commit(p, a.before);
   } else if (tool === 'eraser') {
     clearLive(pe); if (a.changed) commit(p, a.before);
@@ -1025,7 +1108,7 @@ function endAct(e) {
     if (Math.hypot(a.x - a.x0, a.y - a.y0) * a.k > 6) { p.items.push(shapeFromAct(a)); renderInk(pe, p); commit(p, a.before); }
   } else if (tool === 'text') {
     if (e.type === 'pointerup') textTap(p, a.x0, a.y0);
-  } else if (tool === 'move' || tool === 'scale') {
+  } else if (tool === 'move' || tool === 'scale' || tool === 'rotate') {
     commit(p, a.before); renderSel();
   }
 }
@@ -1035,6 +1118,45 @@ function tapSelect(p, x, y) {
   const r = 8 / scale();
   const hit = [...p.items].reverse().find(it => hitItem(it, x, y, r));
   setSel(hit ? { p, ids: new Set([hit.id]) } : null);
+  if (!hit && getClip()) showPasteChip(p, x, y);
+}
+
+/* ---------------- Zwischenablage (auch zwischen Seiten und Notizen) ---------------- */
+let clipMem = null;
+function getClip() {
+  if (clipMem) return clipMem;
+  try { clipMem = JSON.parse(localStorage.getItem('notizbuch.clip')); } catch {}
+  return clipMem && clipMem.length ? clipMem : null;
+}
+function setClip(items) {
+  clipMem = structuredClone(items);
+  try { localStorage.setItem('notizbuch.clip', JSON.stringify(clipMem)); } catch { try { localStorage.removeItem('notizbuch.clip'); } catch {} }
+}
+function removePasteChip() { document.querySelectorAll('.pastechip').forEach(n => n.remove()); }
+function showPasteChip(p, x, y) {
+  removePasteChip();
+  const sc = scale(), el = document.createElement('div');
+  el.className = 'pastechip selbar';
+  Object.assign(el.style, { left: x * sc + 'px', top: y * sc + 'px' });
+  el.innerHTML = '<button>Einfügen</button>';
+  el.addEventListener('pointerdown', e => e.stopPropagation());
+  el.addEventListener('click', () => { removePasteChip(); pasteClip(p, x, y); });
+  pageEls.get(p.id).el.appendChild(el);
+}
+function pasteClip(p = currentPage(), x, y) {
+  const clip = getClip(); if (!clip) return toast('Die Zwischenablage ist leer.');
+  if (x == null) {
+    // Mitte des sichtbaren Bereichs der Seite
+    const r = pageEls.get(p.id).el.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), k = r.width / p.w;
+    x = clamp((wr.left + wr.width / 2 - r.left) / k, 0, p.w); y = clamp((wr.top + wr.height / 2 - r.top) / k, 0, p.h);
+  }
+  const b = unionBox(clip.map(bbox));
+  const dx = clamp(x - b.w / 2, 4, Math.max(4, p.w - b.w - 4)) - b.x, dy = clamp(y - b.h / 2, 4, Math.max(4, p.h - b.h - 4)) - b.y;
+  const before = JSON.stringify(p.items);
+  const items = clip.map(i => ({ ...xform(i, (a, c) => [a + dx, c + dy], 1), id: uid() }));
+  p.items.push(...items);
+  setTool('lasso'); refreshPage(p); commit(p, before);
+  setSel({ p, ids: new Set(items.map(i => i.id)) });
 }
 function selectPoly(p, poly) {
   const ids = new Set();
@@ -1058,43 +1180,93 @@ function renderSel() {
   if (!items.length) { S.sel = null; return; }
   const b = unionBox(items.map(bbox)), sc = scale(), pad = 6;
   const el = document.createElement('div');
-  el.className = 'selbox';
+  // Leiste unter die Auswahl legen, wenn oben kein Platz ist; rechts ausrichten, wenn sie sonst aus der Seite ragt
+  el.className = 'selbox' + (b.y * sc < 110 ? ' below' : '') + (b.x > p.w * 0.45 ? ' right' : '');
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
-  el.innerHTML = `<div class="selbar"><button data-a="color">Farbe übernehmen</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="handle" title="Größe ändern"></div>`;
+  el.innerHTML = `<div class="selbar"><button data-a="style">Stil ändern</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern"></div>`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
-    e.preventDefault();
-    const scaleMode = e.target.classList.contains('handle');
+    e.preventDefault(); hidePops();
+    const mode = e.target.classList.contains('handle') ? 'scale' : e.target.classList.contains('rot') ? 'rotate' : 'move';
     const orig = new Map(p.items.filter(i => ids.has(i.id)).map(i => [i.id, structuredClone(i)]));
-    startAct(scaleMode ? 'scale' : 'move', p, e, { orig });
-    if (scaleMode) { act.ax = b.x; act.ay = b.y; act.d0 = Math.max(1, Math.hypot(act.x0 - b.x, act.y0 - b.y)); }
+    startAct(mode, p, e, { orig });
+    if (mode === 'scale') { act.ax = b.x; act.ay = b.y; act.d0 = Math.max(1, Math.hypot(act.x0 - b.x, act.y0 - b.y)); }
+    if (mode === 'rotate') { act.cx = b.x + b.w / 2; act.cy = b.y + b.h / 2; act.a0 = Math.atan2(act.y0 - act.cy, act.x0 - act.cx); }
     try { el.setPointerCapture(e.pointerId); } catch {}
   });
   el.querySelector('.selbar').addEventListener('click', e => {
-    const a = e.target.closest('button')?.dataset.a; if (!a) return;
-    selAction(a);
+    const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
+    if (a === 'style') openStylePop(btn); else selAction(a);
   });
   pageEls.get(p.id).el.appendChild(el);
 }
-function applySel(fn, k) {
+function applySel(fn, k, da = 0) {
   const { p } = act;
-  p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k) : it);
+  p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k, da) : it);
   renderInk(act.pe, p); renderText(act.pe, p); renderSel();
 }
 function selAction(a) {
   if (!S.sel) return;
   const { p, ids } = S.sel, before = JSON.stringify(p.items);
-  if (a === 'del') { p.items = p.items.filter(i => !ids.has(i.id)); setSel(null); }
+  if (a === 'copy' || a === 'cut') {
+    setClip(p.items.filter(i => ids.has(i.id)));
+    toast(a === 'copy' ? 'Kopiert. Mit dem Lasso auf eine freie Stelle tippen zum Einfügen.' : 'Ausgeschnitten. Mit dem Lasso auf eine freie Stelle tippen zum Einfügen.', 3500);
+    if (a === 'copy') return;
+  }
+  if (a === 'del' || a === 'cut') { p.items = p.items.filter(i => !ids.has(i.id)); setSel(null); }
   else if (a === 'dup') {
     const copies = p.items.filter(i => ids.has(i.id)).map(i => ({ ...xform(i, (x, y) => [x + 16, y + 16], 1), id: uid() }));
     p.items.push(...copies); setSel({ p, ids: new Set(copies.map(c => c.id)) });
-  } else if (a === 'color') {
-    for (const it of p.items) if (ids.has(it.id) && it.t !== 'img') it.color = prefs.color;
-    renderSel();
   }
   refreshPage(p); commit(p, before);
 }
+
+/* ---------------- Stil der Auswahl ändern (Farbe + Strichstärke) ---------------- */
+let styleBefore = null;
+const selItems = () => S.sel ? S.sel.p.items.filter(i => S.sel.ids.has(i.id)) : [];
+const hasSize = it => (it.t === 'stroke' && it.tool !== 'cover') || it.t === 'shape';
+function openStylePop(anchor) {
+  const items = selItems(), sized = items.filter(hasSize);
+  const box = $('#styleSwatches'); box.innerHTML = '';
+  const cur = items.find(i => i.color && i.tool !== 'cover')?.color;
+  for (const c of COLORS) {
+    const b = document.createElement('button');
+    b.className = 'swatch' + (c === cur ? ' active' : ''); b.style.background = c; b.dataset.color = c; b.setAttribute('aria-label', 'Farbe ' + c);
+    box.appendChild(b);
+  }
+  $('#styleSizeRow').hidden = !sized.length;
+  if (sized.length) {
+    const avg = sized.reduce((s, i) => s + i.size, 0) / sized.length;
+    $('#styleSize').max = Math.max(20, Math.ceil(avg));
+    $('#styleSize').value = avg; $('#styleSizeVal').textContent = (+avg.toFixed(1)).toLocaleString('de-DE');
+  }
+  styleBefore = null;
+  showPop($('#stylePop'), anchor);
+}
+function applyStyle(fn, done) {
+  if (!S.sel) return;
+  const { p } = S.sel;
+  styleBefore ??= JSON.stringify(p.items);
+  selItems().forEach(fn);
+  refreshPage(p); renderSel();
+  if (done) { commit(p, styleBefore); styleBefore = null; }
+}
+const setSelColor = c => applyStyle(it => {
+  if (it.t === 'img' || it.tool === 'cover') return;
+  it.color = c; if (it.fill) it.fill = fillFor(c, it.fillMode || 2);
+}, true);
+$('#styleSwatches').addEventListener('click', e => {
+  const c = e.target.closest('[data-color]')?.dataset.color; if (!c) return;
+  setSelColor(c);
+  document.querySelectorAll('#styleSwatches .swatch').forEach(b => b.classList.toggle('active', b.dataset.color === c));
+});
+$('#styleColor').addEventListener('change', e => setSelColor(e.target.value));
+$('#styleSize').addEventListener('input', e => {
+  const v = +e.target.value; $('#styleSizeVal').textContent = v.toLocaleString('de-DE');
+  applyStyle(it => { if (hasSize(it)) it.size = v; }, false);
+});
+$('#styleSize').addEventListener('change', () => applyStyle(() => {}, true));
 
 /* ---------------- Text ---------------- */
 function textTap(p, x, y) {
@@ -1192,6 +1364,12 @@ function updToolbar() {
   $('#optSmooth').value = String(prefs.smoothing ?? 0);
   $('#eraserModes').hidden = t !== 'eraser';
   $('#shapeKinds').hidden = t !== 'shape';
+  $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
+  $('#btnRuler').classList.toggle('active', !!prefs.ruler);
+  $('#btnFill').textContent = 'Füllung: ' + ['aus', 'hell', 'voll'][prefs.fill || 0];
+  $('#btnFill').classList.toggle('active', !!prefs.fill);
+  $('#btnDash').classList.toggle('active', !!prefs.dash);
+  $('#optScribble').checked = prefs.scribble !== false;
   $('#textOpts').hidden = t !== 'text';
   document.querySelectorAll('[data-emode]').forEach(b => b.classList.toggle('active', b.dataset.emode === prefs.emode));
   document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('active', b.dataset.shape === prefs.shape));
@@ -1218,6 +1396,7 @@ $('#penPop').addEventListener('click', e => {
   prefs.penStyle = b.dataset.pstyle; savePrefs(); hidePops(); setTool('pen');
 });
 $('#optSmooth').addEventListener('change', e => { prefs.smoothing = +e.target.value; savePrefs(); });
+$('#optScribble').addEventListener('change', e => { prefs.scribble = e.target.checked; savePrefs(); });
 $('#toolbar').addEventListener('pointerdown', e => { if (S.editing && e.target.closest('button,select,input')) e.preventDefault(); });
 $('#toolbar').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1229,6 +1408,9 @@ $('#toolbar').addEventListener('click', e => {
   }
   else if (b.dataset.tool) setTool(b.dataset.tool);
   else if (b.dataset.color) setColor(b.dataset.color);
+  else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
   else if (b.dataset.shape) { prefs.shape = b.dataset.shape; savePrefs(); updToolbar(); }
   else if (b.dataset.emode) { prefs.emode = b.dataset.emode; savePrefs(); updToolbar(); }
   else if (b.dataset.preset) {
@@ -1270,7 +1452,7 @@ function showPop(pop, anchor) {
   pop.style.top = (r.bottom + 6 + ph > innerHeight - 8 ? Math.max(8, r.top - ph - 6) : r.bottom + 6) + 'px';
 }
 function hidePops() { document.querySelectorAll('.popover').forEach(p => p.hidden = true); }
-document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, .card-menu, .thumb-menu')) hidePops(); });
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, #btnBackup, .card-menu, .thumb-menu')) hidePops(); });
 
 $('#btnMenu').addEventListener('click', e => { commitText(); $('#menuPop').hidden ? showPop($('#menuPop'), e.currentTarget) : hidePops(); });
 $('#menuPop').addEventListener('click', async e => {
@@ -1279,6 +1461,7 @@ $('#menuPop').addEventListener('click', async e => {
   if (m === 'addPage') addPage();
   else if (m === 'dupPage') duplicatePage();
   else if (m === 'bgPage') openBgDlg();
+  else if (m === 'paste') pasteClip();
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
@@ -1649,6 +1832,72 @@ $('#cardPop').addEventListener('click', async e => {
 });
 $('#search').addEventListener('input', e => { S.search = e.target.value; renderLibrary(); });
 $('#btnOpenPdf').addEventListener('click', openPdfFlow);
+
+/* ---------------- Sicherung aller Notizen (eine Datei, z. B. in Nextcloud) ---------------- */
+function b64encode(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function b64decode(str) {
+  const s = atob(str), u8 = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+  return u8;
+}
+async function createBackup() {
+  const notes = await dbAll('notes'), blobs = await dbAll('blobs');
+  if (!notes.length) return toast('Es gibt noch keine Notizen zum Sichern.');
+  // stückweise zusammensetzen, damit auch große PDFs nicht den Speicher sprengen
+  const parts = [`{"app":"notizbuch-backup","version":1,"created":${Date.now()},"folders":${JSON.stringify(prefs.folders)},"notes":${JSON.stringify(notes)},"blobs":[`];
+  blobs.forEach((b, i) => parts.push(`${i ? ',' : ''}{"id":${JSON.stringify(b.id)},"b64":"`, b64encode(new Uint8Array(b.bytes)), '"}'));
+  parts.push(']}');
+  const blob = new Blob(parts, { type: 'application/json' });
+  const name = `Notizbuch-Sicherung-${new Date().toISOString().slice(0, 10)}.json`;
+  try {
+    if (FSA) {
+      const h = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Notizbuch-Sicherung', accept: { 'application/json': ['.json'] } }] });
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+      toast(`${notes.length} Notizen in „${h.name}“ gesichert.`, 4500);
+    } else {
+      const url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast(`Sicherung mit ${notes.length} Notizen heruntergeladen.`, 4500);
+    }
+    prefs.lastBackup = Date.now(); savePrefs();
+  } catch (e) { if (e.name !== 'AbortError') toast('Sicherung fehlgeschlagen: ' + e.message, 6000); }
+}
+async function restoreBackup(file) {
+  let data;
+  try { data = JSON.parse(await file.text()); } catch { return toast('Diese Datei ist keine lesbare Sicherung.', 5000); }
+  if (data.app !== 'notizbuch-backup' || !Array.isArray(data.notes)) return toast('Diese Datei ist keine Notizbuch-Sicherung.', 5000);
+  const local = new Map((await dbAll('notes')).map(n => [n.id, n]));
+  // Nur übernehmen, was hier fehlt oder in der Sicherung neuer ist
+  const take = data.notes.filter(n => !local.has(n.id) || (n.updated || 0) > (local.get(n.id).updated || 0));
+  const skipped = data.notes.length - take.length;
+  if (!take.length) return toast('Alle Notizen aus der Sicherung sind hier schon aktuell.', 4500);
+  if (!confirm(`${take.length} Notiz(en) aus der Sicherung übernehmen?${skipped ? ` ${skipped} sind hier schon gleich oder neuer und bleiben unverändert.` : ''}`)) return;
+  const blobs = new Map((data.blobs || []).map(b => [b.id, b.b64]));
+  for (const n of take) {
+    if (blobs.has(n.id)) await dbPut('blobs', { id: n.id, bytes: b64decode(blobs.get(n.id)).buffer });
+    await dbPut('notes', n);
+  }
+  prefs.folders = [...new Set([...prefs.folders, ...(data.folders || [])])]; savePrefs();
+  await renderLibrary();
+  toast(`${take.length} Notiz(en) wiederhergestellt.`, 4500);
+}
+$('#btnBackup').addEventListener('click', e => $('#backupPop').hidden ? showPop($('#backupPop'), e.currentTarget) : hidePops());
+$('#backupPop').addEventListener('click', async e => {
+  const b = e.target.closest('button')?.dataset.b; if (!b) return;
+  hidePops();
+  if (b === 'save') return createBackup();
+  if (!FSA) return $('#fileBackup').click();
+  try {
+    const [h] = await window.showOpenFilePicker({ types: [{ description: 'Notizbuch-Sicherung', accept: { 'application/json': ['.json'] } }] });
+    await restoreBackup(await h.getFile());
+  } catch (err) { if (err.name !== 'AbortError') toast('Öffnen fehlgeschlagen: ' + err.message, 6000); }
+});
+$('#fileBackup').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) restoreBackup(f); });
 $('#btnNewNote').addEventListener('click', () => $('#newDlg').showModal());
 $('#newDlg').addEventListener('close', () => {
   if ($('#newDlg').returnValue !== 'ok') return;

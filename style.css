@@ -353,3 +353,21 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 .popover button:disabled { opacity: .4; cursor: default; }
 .icon-btn.on { background: var(--accent-soft); color: var(--accent); }
+.selbox .rot {
+  position: absolute; left: 50%; top: -40px; margin-left: -13px; width: 26px; height: 26px;
+  border-radius: 50%; background: #fff; border: 3px solid #2f5d50; cursor: grab;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.selbox .rot::after { content: ""; position: absolute; left: 50%; top: 100%; width: 2px; height: 11px; margin-left: -1px; background: #2f5d50; }
+.selbox .selbar { bottom: calc(100% + 50px); }
+.pastechip { position: absolute; bottom: auto; z-index: 4; transform: translate(-50%, -120%); pointer-events: auto; }
+.style-pop { min-width: 290px; padding: 12px 14px; gap: 6px; }
+.style-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); display: flex; justify-content: space-between; }
+.style-colors { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.popover.style-pop .swatch { padding: 0; border-radius: 50%; }
+.style-pop input[type=range] { width: 100%; accent-color: var(--accent); }
+#backupPop small { color: var(--muted); }
+.selbox.below .selbar { bottom: auto; top: calc(100% + 50px); }
+.selbox.below .rot { top: auto; bottom: -40px; }
+.selbox.below .rot::after { top: auto; bottom: 100%; }
+.selbox.right .selbar { left: auto; right: -2px; }
