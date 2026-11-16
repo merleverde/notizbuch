@@ -134,7 +134,7 @@ function penPaint(ctx, it, st, pr) {
 }
 
 function drawPaper(ctx, p) {
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, p.w, p.h);
+  ctx.fillStyle = p.paper || '#fff'; ctx.fillRect(0, 0, p.w, p.h);
   ctx.save();
   if (p.bg === 'lined') {
     ctx.strokeStyle = '#c9d6e3'; ctx.lineWidth = 0.7; ctx.beginPath();
@@ -522,13 +522,13 @@ function commit(p, before) {
   S.undo.push({ pid: p.id, before, after });
   if (S.undo.length > 60) S.undo.shift();
   S.redo.length = 0;
-  updUndo(); markDirty();
+  updUndo(); markDirty(); queueThumb(p.id);
 }
 function applyHist(from, to, key) {
   commitText();
   const h = from.pop(); if (!h) return;
   const p = pageById(h.pid);
-  if (p) { p.items = JSON.parse(h[key]); setSel(null); refreshPage(p); markDirty(); }
+  if (p) { p.items = JSON.parse(h[key]); setSel(null); refreshPage(p); markDirty(); queueThumb(p.id); }
   to.push(h); updUndo();
 }
 const undo = () => applyHist(S.undo, S.redo, 'before');
@@ -820,7 +820,7 @@ function startAct(tool, p, e, extra = {}) {
   if (tool !== 'move' && tool !== 'scale' && tool !== 'text') act.ctx = prepLive(pe, p);
   if (tool === 'eraser' && prefs.emode === 'cover') {
     act.tool = 'cover';
-    act.item = { t: 'stroke', id: uid(), tool: 'cover', color: '#ffffff', size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
+    act.item = { t: 'stroke', id: uid(), tool: 'cover', color: coverColor(act.p), size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
     addPts(e);
   } else if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
@@ -906,6 +906,8 @@ function addPts(e) {
   }
   if (last) holdCheck(last[0], last[1]);
 }
+/* Abdecken malt in der Papierfarbe der Seite (PDF-Seiten: weiß) */
+const coverColor = p => (p.pdf == null && p.paper) || '#ffffff';
 /* Glätten: 0 = aus, 1 = mittel, 2 = stark */
 const SMOOTH_ALPHA = [1, 0.5, 0.22];
 function smoothStroke(a) {
@@ -967,7 +969,7 @@ function moveAct(e) {
     act.tool = 'eraser'; act.recog = null;
     if (prefs.emode === 'cover') {
       act.tool = 'cover';
-      act.item = { t: 'stroke', id: uid(), tool: 'cover', color: '#ffffff', size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
+      act.item = { t: 'stroke', id: uid(), tool: 'cover', color: coverColor(act.p), size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
     }
   }
   const t = act.tool, ctx = act.ctx;
@@ -1268,13 +1270,15 @@ function showPop(pop, anchor) {
   pop.style.top = (r.bottom + 6 + ph > innerHeight - 8 ? Math.max(8, r.top - ph - 6) : r.bottom + 6) + 'px';
 }
 function hidePops() { document.querySelectorAll('.popover').forEach(p => p.hidden = true); }
-document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, .card-menu')) hidePops(); });
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, .card-menu, .thumb-menu')) hidePops(); });
 
 $('#btnMenu').addEventListener('click', e => { commitText(); $('#menuPop').hidden ? showPop($('#menuPop'), e.currentTarget) : hidePops(); });
 $('#menuPop').addEventListener('click', async e => {
   const m = e.target.closest('button')?.dataset.m; if (!m) return;
   hidePops();
   if (m === 'addPage') addPage();
+  else if (m === 'dupPage') duplicatePage();
+  else if (m === 'bgPage') openBgDlg();
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
@@ -1298,27 +1302,147 @@ $('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true
 $('#optFinger').addEventListener('change', e => { prefs.finger = e.target.checked; savePrefs(); toast(prefs.finger ? 'Finger zeichnet jetzt. Scrollen mit zwei Fingern.' : 'Finger scrollt, nur der Stift zeichnet.'); });
 $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.checked; savePrefs(); });
 
-function addPage() {
-  const cur = currentPage(), i = S.note.pages.indexOf(cur);
-  const last = [...S.note.pages].reverse().find(p => p.pdf == null);
-  const p = { id: uid(), w: cur.w, h: cur.h, bg: last ? last.bg : 'blank', pdf: null, items: [] };
-  S.note.pages.splice(i + 1, 0, p);
-  const next = S.note.pages[i + 2];
+/* ---------------- Seiten: einfügen, duplizieren, verschieben, löschen ---------------- */
+function pagesChanged() { layout(); buildPanel(); markDirty(); }
+function insertPage(i, p) {
+  S.note.pages.splice(i, 0, p);
+  const next = S.note.pages[i + 1];
   addPageEl(p, next ? pageEls.get(next.id).el : null);
-  layout(); markDirty();
-  requestAnimationFrame(() => pageEls.get(p.id).el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  pagesChanged();
+  requestAnimationFrame(() => pageEls.get(p.id)?.el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
+function addPage(after = currentPage()) {
+  const i = S.note.pages.indexOf(after);
+  const tpl = after.pdf == null ? after : [...S.note.pages].reverse().find(p => p.pdf == null);
+  insertPage(i + 1, { id: uid(), w: after.w, h: after.h, bg: tpl ? tpl.bg : 'blank', paper: tpl?.paper, pdf: null, items: [] });
   toast(`Seite ${i + 2} eingefügt.`);
 }
-function deletePage() {
+function duplicatePage(p = currentPage()) {
+  commitText();
+  const i = S.note.pages.indexOf(p), c = structuredClone(p);
+  c.id = uid(); c.items.forEach(it => { it.id = uid(); });
+  insertPage(i + 1, c);
+  toast(`Seite ${i + 1} dupliziert.`);
+}
+function movePage(p, d) {
+  const a = S.note.pages, i = a.indexOf(p), j = i + d;
+  if (j < 0 || j >= a.length) return;
+  a.splice(i, 1); a.splice(j, 0, p);
+  const next = a[j + 1];
+  pagesHost.insertBefore(pageEls.get(p.id).el, next ? pageEls.get(next.id).el : null);
+  pagesChanged();
+}
+function deletePage(p = currentPage()) {
   if (S.note.pages.length < 2) return toast('Die letzte Seite kann nicht gelöscht werden.');
-  const p = currentPage(), i = S.note.pages.indexOf(p);
+  const i = S.note.pages.indexOf(p);
   if (!confirm(`Seite ${i + 1} löschen? Das lässt sich nicht rückgängig machen.`)) return;
+  commitText();
   S.note.pages.splice(i, 1);
   const pe = pageEls.get(p.id); io.unobserve(pe.el); pe.el.remove(); pageEls.delete(p.id);
   S.undo = S.undo.filter(h => h.pid !== p.id); S.redo = S.redo.filter(h => h.pid !== p.id); updUndo();
   if (S.sel?.p === p) setSel(null);
-  layout(); markDirty();
+  pagesChanged();
 }
+
+/* ---------------- Seitenübersicht (Vorschaubilder am Rand) ---------------- */
+const panel = $('#pagePanel'), thumbList = $('#thumbList');
+const thumbEls = new Map(), thumbQueue = new Set();
+let thumbT = 0, pageTarget = null;
+function buildPanel() {
+  thumbList.innerHTML = ''; thumbEls.clear(); thumbQueue.clear();
+  if (!S.note || panel.hidden) return;
+  S.note.pages.forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'thumb-item'; el.dataset.id = p.id;
+    el.innerHTML = `<button class="thumb-open" aria-label="Zu Seite ${i + 1}"><canvas width="10" height="10"></canvas></button>
+      <div class="thumb-row"><span class="thumb-no">${i + 1}</span><button class="thumb-menu" aria-label="Optionen für Seite ${i + 1}">⋯</button></div>`;
+    el.querySelector('canvas').style.aspectRatio = `${p.w} / ${p.h}`;
+    thumbList.appendChild(el); thumbEls.set(p.id, el); queueThumb(p.id);
+  });
+  markCurrentThumb();
+}
+function queueThumb(id) {
+  if (panel.hidden) return;
+  thumbQueue.add(id); clearTimeout(thumbT); thumbT = setTimeout(flushThumbs, 300);
+}
+async function flushThumbs() {
+  const ids = [...thumbQueue]; thumbQueue.clear();
+  for (const id of ids) {
+    const p = S.note && pageById(id), el = thumbEls.get(id);
+    if (!p || !el) continue;
+    try {
+      const c = await pageThumb(p, 240), t = el.querySelector('canvas');
+      if (!thumbEls.has(id)) continue;
+      t.width = c.width; t.height = c.height; t.getContext('2d').drawImage(c, 0, 0);
+    } catch {}
+  }
+}
+function markCurrentThumb() {
+  if (panel.hidden || !S.note) return;
+  const cur = currentPage();
+  thumbEls.forEach((el, id) => el.classList.toggle('current', id === cur.id));
+}
+let scrollT = 0;
+wrap.addEventListener('scroll', () => { if (!scrollT) scrollT = setTimeout(() => { scrollT = 0; markCurrentThumb(); }, 150); }, { passive: true });
+
+function togglePanel(show = panel.hidden) {
+  panel.hidden = !show; prefs.panel = show; savePrefs();
+  $('#btnPages').classList.toggle('on', show);
+  if (S.note) { layout(); buildPanel(); }
+}
+$('#btnPages').addEventListener('click', () => { commitText(); togglePanel(); });
+$('#btnPanelAdd').addEventListener('click', () => addPage(S.note.pages[S.note.pages.length - 1]));
+thumbList.addEventListener('click', e => {
+  const item = e.target.closest('.thumb-item'); if (!item) return;
+  const p = pageById(item.dataset.id); if (!p) return;
+  const menu = e.target.closest('.thumb-menu');
+  if (menu) {
+    pageTarget = p;
+    const i = S.note.pages.indexOf(p), pop = $('#pagePop');
+    pop.querySelector('[data-p="up"]').disabled = i === 0;
+    pop.querySelector('[data-p="down"]').disabled = i === S.note.pages.length - 1;
+    pop.querySelector('[data-p="del"]').disabled = S.note.pages.length < 2;
+    showPop(pop, menu);
+  } else pageEls.get(p.id).el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+$('#pagePop').addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.p, p = pageTarget; if (!a || !p) return;
+  hidePops();
+  if (a === 'dup') duplicatePage(p);
+  else if (a === 'add') addPage(p);
+  else if (a === 'bg') openBgDlg(p);
+  else if (a === 'up') movePage(p, -1);
+  else if (a === 'down') movePage(p, 1);
+  else if (a === 'del') deletePage(p);
+});
+
+/* ---------------- Seitenhintergrund ---------------- */
+let bgTarget = null;
+function openBgDlg(p = currentPage()) {
+  const free = S.note.pages.filter(x => x.pdf == null);
+  if (!free.length) return toast('PDF-Seiten haben einen festen Hintergrund. Füge eine leere Seite ein, um ein Muster zu wählen.', 5000);
+  bgTarget = p;
+  const f = $('#bgForm'), ref = p.pdf == null ? p : free[0];
+  f.elements.bgPattern.value = ref.bg === 'pdf' ? 'blank' : ref.bg;
+  f.elements.bgColor.value = ref.paper || '#ffffff';
+  f.elements.bgScope.value = p.pdf == null ? 'one' : 'all';
+  f.querySelector('[name="bgScope"][value="one"]').disabled = p.pdf != null;
+  $('#bgScopeOne').textContent = `Seite ${S.note.pages.indexOf(p) + 1}`;
+  $('#bgNote').hidden = free.length === S.note.pages.length;
+  $('#bgDlg').showModal();
+}
+$('#bgDlg').addEventListener('close', () => {
+  if ($('#bgDlg').returnValue !== 'ok' || !S.note || !bgTarget) return;
+  const f = new FormData($('#bgForm'));
+  const targets = (f.get('bgScope') === 'all' ? S.note.pages : [bgTarget]).filter(p => p.pdf == null);
+  for (const p of targets) {
+    p.bg = f.get('bgPattern') || 'blank'; p.paper = f.get('bgColor') || '#ffffff';
+    const pe = pageEls.get(p.id); if (pe) pe.sc = null;
+    queueThumb(p.id);
+  }
+  scheduleRender(); markDirty();
+  toast(targets.length > 1 ? `Hintergrund für ${targets.length} Seiten geändert.` : 'Hintergrund geändert.');
+});
 
 /* ---------------- Notizen öffnen/anlegen ---------------- */
 async function openNote(note) {
@@ -1334,7 +1458,8 @@ async function openNote(note) {
   $('#library').hidden = true; $('#editor').hidden = false;
   $('#noteTitle').value = note.title;
   updState(); updUndo(); updToolbar();
-  buildPages(); wrap.scrollTop = 0; wrap.scrollLeft = 0;
+  panel.hidden = !prefs.panel; $('#btnPages').classList.toggle('on', !!prefs.panel);
+  buildPages(); buildPanel(); wrap.scrollTop = 0; wrap.scrollLeft = 0;
 }
 /* Beim Schließen nie still überschreiben: fragen, was mit den Änderungen passieren soll */
 function askClose() {
@@ -1373,22 +1498,25 @@ async function closeEditor() {
   const pdf = S.pdf;
   S.note = null; S.pdf = null; S.origBytes = null; S.handle = null; setSel(null);
   pageEls.forEach(pe => { io.unobserve(pe.el); freePage(pe); }); pageEls.clear(); pagesHost.innerHTML = '';
+  thumbList.innerHTML = ''; thumbEls.clear();
   pdf?.destroy();
   $('#editor').hidden = true; $('#library').hidden = false;
   renderLibrary();
 }
-async function makeThumb() {
-  const p = S.note.pages[0], W = 300, r = W / p.w;
+/* Kleine Vorschau einer Seite (Bibliothek, Seitenübersicht) */
+async function pageThumb(p, W) {
+  const r = W / p.w, pdf = S.pdf;
   const c = document.createElement('canvas'); c.width = W; c.height = Math.round(p.h * r);
   const ctx = c.getContext('2d');
-  if (p.pdf != null && S.pdf) {
+  if (p.pdf != null && pdf) {
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
-    const pg = await S.pdf.getPage(p.pdf + 1);
+    const pg = await pdf.getPage(p.pdf + 1);
     await pg.render({ canvasContext: ctx, viewport: pg.getViewport({ scale: r }) }).promise;
     ctx.setTransform(r, 0, 0, r, 0, 0); await paintOverlay(ctx, p, false);
   } else { ctx.setTransform(r, 0, 0, r, 0, 0); await paintOverlay(ctx, p, true); }
-  return c.toDataURL('image/jpeg', 0.75);
+  return c;
 }
+const makeThumb = async () => (await pageThumb(S.note.pages[0], 300)).toDataURL('image/jpeg', 0.75);
 
 async function newNote(paper, orient) {
   const [w, h] = orient === 'l' ? [A4[1], A4[0]] : A4;
