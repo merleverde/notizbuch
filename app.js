@@ -273,6 +273,8 @@ function drawItems(ctx, items, onImg) {
     }
     else if (it.t === 'shape') drawShape(ctx, it);
     else if (it.t === 'stroke') drawStroke(ctx, it);
+    // Text liegt in derselben Ebenenfolge; das gerade bearbeitete Textfeld zeigt das Eingabefeld selbst
+    else if (it.t === 'text' && !(S.editing && S.editing.it.id === it.id)) drawText(ctx, it);
   }
 }
 
@@ -298,7 +300,6 @@ async function paintOverlay(ctx, p, withPaper) {
   if (withPaper) drawPaper(ctx, p);
   await loadImages(p.items);
   drawItems(ctx, p.items);
-  for (const it of p.items) if (it.t === 'text') drawText(ctx, it);
 }
 
 /* ---------------- Geometrie der Elemente ---------------- */
@@ -551,7 +552,8 @@ function renderText(pe, p) {
     else { n = document.createElement('div'); n.className = 'tx'; n.dataset.id = it.id; pe.text.appendChild(n); }
     Object.assign(n.style, {
       left: it.x * sc + 'px', top: it.y * sc + 'px', width: it.w * sc + 'px',
-      fontSize: it.size * sc + 'px', color: it.color, fontWeight: it.bold ? '700' : '400'
+      // nur das Eingabefeld beim Tippen ist sichtbar; sonst zeichnet der Canvas den Text in der richtigen Ebene
+      fontSize: it.size * sc + 'px', color: S.editing && S.editing.it.id === it.id ? it.color : 'transparent', fontWeight: it.bold ? '700' : '400'
     });
     if (!(S.editing && S.editing.it.id === it.id)) n.textContent = it.text;
     it.h = n.offsetHeight / sc || it.size * 1.35;
@@ -713,7 +715,7 @@ class PdfCtx {
     this.cur = {};
   }
 }
-const needsRaster = it => it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain;
+const needsRaster = it => it.t === 'text' || (it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain);
 function dataUrlBytes(url) { return b64decode(url.slice(url.indexOf(',') + 1)); }
 
 /* Ausschnitt mit den übergebenen Elementen als PNG rendern (für Bleistift und Text) */
@@ -753,7 +755,6 @@ async function exportOverlay(out, pg, p, withPaper) {
     };
     const embedded = out._nbImgs ||= new Map();
     for (const it of p.items) {
-      if (it.t === 'text') continue;
       if (needsRaster(it)) { batch.push(it); continue; }
       await flush(false);
       if (it.t === 'img') {
@@ -765,7 +766,6 @@ async function exportOverlay(out, pg, p, withPaper) {
       else drawStroke(v, it);
     }
     await flush(false);
-    batch = p.items.filter(it => it.t === 'text'); await flush(true);
     if (!v.ops.length) return;
     pg.node.normalize();
     pg.pushOperators(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(...base), ...v.ops, PDFLib.popGraphicsState());
@@ -1511,7 +1511,7 @@ function renderSel() {
   // Leiste unter die Auswahl legen, wenn oben kein Platz ist; rechts ausrichten, wenn sie sonst aus der Seite ragt
   el.className = 'selbox' + (b.y * sc < 110 ? ' below' : '') + (b.x > p.w * 0.45 ? ' right' : '');
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
-  el.innerHTML = `<div class="selbar"><button data-a="style">Stil ändern</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern"></div>`;
+  el.innerHTML = `<div class="selbar"><button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern"></div>`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -1525,7 +1525,9 @@ function renderSel() {
   });
   el.querySelector('.selbar').addEventListener('click', e => {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
-    if (a === 'style') openStylePop(btn); else selAction(a);
+    if (a === 'style') openStylePop(btn);
+    else if (a === 'layer') showPop($('#layerPop'), btn);
+    else selAction(a);
   });
   pageEls.get(p.id).el.appendChild(el);
 }
@@ -1549,6 +1551,40 @@ function selAction(a) {
   }
   refreshPage(p); commit(p, before);
 }
+
+/* ---------------- Ebenen: Reihenfolge der Elemente auf der Seite ----------------
+   Was später in p.items steht, liegt weiter vorne. Die ausgewählten Elemente behalten
+   untereinander ihre Reihenfolge. „Eine Ebene“ springt am nächsten Element vorbei, das die
+   Auswahl tatsächlich überlappt; sonst würde sich sichtbar nichts ändern. */
+const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+function moveLayer(dir) {
+  if (!S.sel) return;
+  const { p, ids } = S.sel, before = JSON.stringify(p.items);
+  const sel = p.items.filter(i => ids.has(i.id)), rest = p.items.filter(i => !ids.has(i.id));
+  const box = unionBox(sel.map(bbox));
+  const first = p.items.findIndex(i => ids.has(i.id)), last = p.items.length - 1 - [...p.items].reverse().findIndex(i => ids.has(i.id));
+  let at;                                                  // Einfügestelle in „rest“
+  if (dir === 'top') at = rest.length;
+  else if (dir === 'bottom') at = 0;
+  else if (dir === 'up') {
+    const next = p.items.findIndex((it, i) => i > last && !ids.has(it.id) && overlaps(bbox(it), box));
+    if (next < 0) return toast('Liegt schon ganz vorne.', 1800);
+    at = rest.indexOf(p.items[next]) + 1;
+  } else {
+    let prev = -1;
+    for (let i = first - 1; i >= 0; i--) if (!ids.has(p.items[i].id) && overlaps(bbox(p.items[i]), box)) { prev = i; break; }
+    if (prev < 0) return toast('Liegt schon ganz hinten.', 1800);
+    at = rest.indexOf(p.items[prev]);
+  }
+  rest.splice(at, 0, ...sel);
+  p.items = rest;
+  if (JSON.stringify(p.items) === before) return toast(dir === 'top' || dir === 'up' ? 'Liegt schon ganz vorne.' : 'Liegt schon ganz hinten.', 1800);
+  refreshPage(p); renderSel(); commit(p, before);
+}
+$('#layerPop').addEventListener('click', e => {
+  const d = e.target.closest('[data-l]')?.dataset.l; if (!d) return;
+  hidePops(); moveLayer(d);
+});
 
 /* ---------------- Stil der Auswahl ändern (Farbe + Strichstärke) ---------------- */
 let styleBefore = null;
@@ -1608,7 +1644,7 @@ function textTap(p, x, y) {
   }
   S.editing = { p, it, before };
   const pe = pageEls.get(p.id);
-  renderText(pe, p);
+  renderText(pe, p); renderInk(pe, p);
   const n = pe.text.querySelector(`[data-id="${it.id}"]`);
   n.classList.add('editing');
   n.contentEditable = 'plaintext-only';
@@ -1626,7 +1662,7 @@ function commitText() {
   const n = pe && pe.text.querySelector(`[data-id="${it.id}"]`);
   if (n) { it.text = n.innerText.replace(/\n$/, ''); n.contentEditable = 'false'; n.classList.remove('editing'); }
   if (!it.text.trim()) p.items = p.items.filter(i => i !== it);
-  if (pe) renderText(pe, p);
+  if (pe) { renderText(pe, p); renderInk(pe, p); }
   commit(p, before);
 }
 function styleEditing() {
