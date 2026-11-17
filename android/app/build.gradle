@@ -10,8 +10,8 @@ android {
         applicationId = 'de.notizbuch.app'
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = '1.0'
+        versionCode = 2
+        versionName = '1.1'
     }
 
     compileOptions {
@@ -19,9 +19,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // Eigener Signaturschlüssel für die Tablet-Version. Schlüssel und Passwort liegen nur auf diesem PC
-    // (android/keystore.properties ist nicht im Repository). Ohne denselben Schlüssel lassen sich
-    // spätere Updates nicht über die installierte App installieren.
+    // Eigener SignaturschlÃ¼ssel fÃ¼r die Tablet-Version. SchlÃ¼ssel und Passwort liegen nur auf diesem PC
+    // (android/keystore.properties ist nicht im Repository). Ohne denselben SchlÃ¼ssel lassen sich
+    // spÃ¤tere Updates nicht Ã¼ber die installierte App installieren.
     def ksFile = rootProject.file('keystore.properties')
     if (ksFile.exists()) {
         def ks = new Properties()
@@ -52,3 +52,21 @@ def copyWeb = tasks.register('copyWeb', Copy) {
     into 'src/main/assets/www'
 }
 tasks.named('preBuild') { dependsOn copyWeb }
+
+// Neue Version verÃ¶ffentlichen:  .\gradlew.bat publishApk
+// Baut die signierte APK und legt sie mit version.json in ../download/.
+// Nach Commit + Push findet â€žNach Updates suchenâ€œ in der App die neue Version.
+tasks.register('publishApk') {
+    dependsOn 'assembleRelease'
+    doLast {
+        def dl = rootProject.file('../download')
+        dl.mkdirs()
+        def apk = file('build/outputs/apk/release/app-release.apk')
+        if (!apk.exists()) throw new GradleException('Keine Release-APK gefunden: ' + apk)
+        java.nio.file.Files.copy(apk.toPath(), new File(dl, 'Notizbuch.apk').toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        def info = [versionCode: android.defaultConfig.versionCode, versionName: android.defaultConfig.versionName,
+                    apk: 'Notizbuch.apk', date: new Date().format('yyyy-MM-dd')]
+        new File(dl, 'version.json').setText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(info)), 'UTF-8')
+        println "VerÃ¶ffentlicht: Version ${info.versionName} (${info.versionCode}) in ${dl}"
+    }
+}

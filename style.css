@@ -393,3 +393,5 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 }
 .paper-pick { row-gap: 14px; }
 .app-version { font-size: .75rem; color: var(--muted); padding: 2px 12px 6px; font-variant-numeric: tabular-nums; }
+#settingsPop small { color: var(--muted); }
+#updateDlg p { margin: -6px 0 16px; color: var(--muted); }

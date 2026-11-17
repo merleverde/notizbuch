@@ -60,6 +60,9 @@ import java.util.concurrent.Executors;
 public class MainActivity extends ComponentActivity {
 
     private static final String START_URL = "https://appassets.androidplatform.net/assets/www/index.html";
+    /** Hier steht, welche App-Version aktuell ist (wird beim Bauen von Gradle geschrieben). */
+    private static final String UPDATE_INFO_URL = "https://merleverde.github.io/notizbuch/download/version.json";
+    private static final String INSTALL_ACTION = "de.notizbuch.app.INSTALL_STATUS";
 
     private WebView web;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -172,6 +175,31 @@ public class MainActivity extends ComponentActivity {
 
         handleIntent(getIntent());
         web.loadUrl(START_URL);
+
+        // Rückmeldung des Android-Installers bei „Nach Updates suchen“
+        android.content.BroadcastReceiver installStatus = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent i) {
+                int status = i.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, -999);
+                if (status == android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                    // Android zeigt jetzt „Diese App aktualisieren?“ – der Nutzer bestätigt selbst
+                    Intent confirm = Build.VERSION.SDK_INT >= 33
+                            ? i.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class)
+                            : i.getParcelableExtra(Intent.EXTRA_INTENT);
+                    if (confirm != null) {
+                        confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(confirm);
+                    }
+                } else if (status != android.content.pm.PackageInstaller.STATUS_SUCCESS) {
+                    String msg = i.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE);
+                    String js = "window.nativeUpdateFailed && window.nativeUpdateFailed(" + JSONObject.quote(msg == null ? "Installation abgebrochen" : msg) + ")";
+                    runOnUiThread(() -> web.evaluateJavascript(js, null));
+                }
+            }
+        };
+        android.content.IntentFilter installFilter = new android.content.IntentFilter(INSTALL_ACTION);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(installStatus, installFilter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(installStatus, installFilter);
 
         // Nur in Test-Versionen: JavaScript per adb ausführen, Ergebnis landet im Protokoll
         //   adb shell am broadcast -a de.notizbuch.app.EVAL --es js "1+1"
@@ -329,6 +357,94 @@ public class MainActivity extends ComponentActivity {
             } catch (PackageManager.NameNotFoundException e) {
                 return "?";
             }
+        }
+
+        @JavascriptInterface
+        public int appVersionCode() {
+            try {
+                android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+                return Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
+            } catch (PackageManager.NameNotFoundException e) {
+                return 0;
+            }
+        }
+
+        /** Liest version.json von der GitHub-Seite (ohne Zwischenspeicher). */
+        @JavascriptInterface
+        public void checkUpdate(int id, String url) {
+            io.execute(() -> {
+                try {
+                    String base = url == null || url.isEmpty() ? UPDATE_INFO_URL : url;
+                    java.net.HttpURLConnection c = openHttp(base + "?t=" + System.currentTimeMillis());
+                    try (InputStream in = c.getInputStream()) {
+                        ByteArrayOutputStream out = new ByteArrayOutputStream();
+                        byte[] buf = new byte[8192];
+                        for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+                        done(id, new JSONObject(out.toString("UTF-8")));
+                    } finally { c.disconnect(); }
+                } catch (Exception e) {
+                    fail(id, "NetworkError", e.getMessage());
+                }
+            });
+        }
+
+        /** Lädt die neue APK und übergibt sie dem Android-Installer. Bestätigen muss der Nutzer selbst. */
+        @JavascriptInterface
+        public void installUpdate(int id, String apkUrl) {
+            io.execute(() -> {
+                if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+                    // Einmalig erlauben: Einstellungen → „Unbekannte Apps installieren“ → Notizbuch
+                    runOnUiThread(() -> {
+                        try {
+                            startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                        } catch (ActivityNotFoundException ignored) { }
+                    });
+                    try { done(id, new JSONObject().put("needsPermission", true)); } catch (JSONException ignored) { }
+                    return;
+                }
+                try {
+                    java.net.HttpURLConnection c = openHttp(apkUrl);
+                    long total = c.getContentLengthLong();
+                    android.content.pm.PackageInstaller installer = getPackageManager().getPackageInstaller();
+                    android.content.pm.PackageInstaller.SessionParams params =
+                            new android.content.pm.PackageInstaller.SessionParams(android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                    params.setAppPackageName(getPackageName());
+                    int sid = installer.createSession(params);
+                    try (android.content.pm.PackageInstaller.Session s = installer.openSession(sid)) {
+                        try (InputStream in = c.getInputStream(); OutputStream out = s.openWrite("update.apk", 0, total)) {
+                            byte[] buf = new byte[65536];
+                            long got = 0; int last = -1;
+                            for (int n; (n = in.read(buf)) > 0; ) {
+                                out.write(buf, 0, n);
+                                got += n;
+                                int pct = total > 0 ? (int) (got * 100 / total) : -1;
+                                if (pct != last && pct % 10 == 0) {
+                                    last = pct;
+                                    final String js = "window.nativeUpdateProgress && window.nativeUpdateProgress(" + pct + ")";
+                                    runOnUiThread(() -> web.evaluateJavascript(js, null));
+                                }
+                            }
+                            s.fsync(out);
+                        } finally { c.disconnect(); }
+                        Intent cb = new Intent(INSTALL_ACTION).setPackage(getPackageName());
+                        int flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? android.app.PendingIntent.FLAG_MUTABLE : 0);
+                        s.commit(android.app.PendingIntent.getBroadcast(MainActivity.this, sid, cb, flags).getIntentSender());
+                    }
+                    done(id, new JSONObject().put("started", true));
+                } catch (Exception e) {
+                    fail(id, "Error", e.getMessage());
+                }
+            });
+        }
+
+        private java.net.HttpURLConnection openHttp(String url) throws java.io.IOException {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setUseCaches(false);
+            c.setRequestProperty("Cache-Control", "no-cache");
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(30000);
+            if (c.getResponseCode() != 200) throw new java.io.IOException("Server antwortet mit " + c.getResponseCode());
+            return c;
         }
 
         @JavascriptInterface

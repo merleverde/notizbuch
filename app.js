@@ -1865,7 +1865,7 @@ function showPop(pop, anchor) {
   pop.style.top = (r.bottom + 6 + ph > innerHeight - 8 ? Math.max(8, r.top - ph - 6) : r.bottom + 6) + 'px';
 }
 function hidePops() { document.querySelectorAll('.popover').forEach(p => p.hidden = true); }
-document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, #btnBackup, .card-menu, .thumb-menu')) hidePops(); });
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, #btnBackup, #btnSettings, .card-menu, .thumb-menu')) hidePops(); });
 
 $('#btnMenu').addEventListener('click', e => { commitText(); $('#menuPop').hidden ? showPop($('#menuPop'), e.currentTarget) : hidePops(); });
 $('#menuPop').addEventListener('click', async e => {
@@ -2478,16 +2478,17 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 25;
-$('#appVersion').textContent = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
+const APP_VERSION = 26;
+const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
+$('#appVersion').textContent = versionText;
+$('#settingsVersion').textContent = versionText;
 let updateReady = false;
 function applyUpdate() {
   if (S.note || saving) { updateReady = true; return; }
   location.reload();
 }
-// In der Android-App liegen alle Dateien in der App selbst; Updates kommen dort mit einer neuen App-Version
-if (NATIVE) $('#btnUpdate').hidden = true;
-else if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+// Web: Updates kommen über den Service Worker (siehe sw.js)
+if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').then(reg => {
     // beim Zurückkehren in die App nach Updates schauen
@@ -2495,14 +2496,59 @@ else if ('serviceWorker' in navigator && (location.protocol === 'https:' || loca
   }).catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) applyUpdate(); });
 }
-$('#btnUpdate').addEventListener('click', async () => {
-  hidePops();
-  const reg = await navigator.serviceWorker?.getRegistration();
-  if (!reg) return toast('Updates werden hier nicht unterstützt.');
-  toast('Suche nach Updates …', 2000);
-  try { await reg.update(); } catch {}
-  if (!reg.installing && !reg.waiting) toast(`Du hast die neueste Version (${APP_VERSION}).`, 3000);
+
+/* Android-App: version.json auf der GitHub-Seite sagt, welche App-Version aktuell ist.
+   Ist sie neuer, wird die APK geladen und der Android-Installer geöffnet (der Nutzer bestätigt dort). */
+const UPDATE_INFO = 'https://merleverde.github.io/notizbuch/download/version.json';
+let updateInfo = null;
+async function checkForUpdates(manual) {
+  if (!NATIVE) {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (!reg) return manual && toast('Updates werden hier nicht unterstützt.');
+    if (manual) toast('Suche nach Updates …', 2000);
+    try { await reg.update(); } catch {}
+    if (manual && !reg.installing && !reg.waiting) toast(`Du hast die neueste Version (${APP_VERSION}).`, 3000);
+    return;
+  }
+  if (manual) toast('Suche nach Updates …', 2000);
+  try {
+    let src = UPDATE_INFO; try { src = localStorage.getItem('notizbuch.updateUrl') || UPDATE_INFO; } catch {}   // nur zum Testen änderbar
+    const info = await window.NATIVE_APP.checkUpdate(src);
+    info.base = src;
+    try { localStorage.setItem('notizbuch.updateChecked', String(Date.now())); } catch {}
+    if (+info.versionCode > window.NATIVE_APP.versionCode) {
+      updateInfo = info;
+      $('#updateMsg').textContent = `Version ${info.versionName} ist verfügbar (installiert: ${window.NATIVE_APP.version}). Deine Notizen bleiben beim Aktualisieren erhalten.`;
+      $('#updateDlg').showModal();
+    } else if (manual) toast(`Du hast die neueste Version (${window.NATIVE_APP.version}).`, 3000);
+  } catch (e) {
+    if (manual) toast('Keine Verbindung zur Update-Seite. Bitte später nochmal versuchen.', 4000);
+  }
+}
+$('#updateDlg').addEventListener('click', async e => {
+  const u = e.target.closest('[data-u]')?.dataset.u; if (!u) return;
+  $('#updateDlg').close();
+  if (u !== 'install' || !updateInfo) return;
+  commitText(); if (S.note) await saveLocal();          // lokaler Stand ist gesichert, bevor die App ersetzt wird
+  toast('Update wird geladen …', 60000);
+  try {
+    const url = new URL(updateInfo.apk || 'Notizbuch.apk', updateInfo.base || UPDATE_INFO).href + '?v=' + updateInfo.versionCode;
+    const r = await window.NATIVE_APP.installUpdate(url);
+    if (r.needsPermission) toast('Bitte „Apps aus dieser Quelle zulassen“ einschalten, dann zurück und nochmal „Jetzt installieren“.', 9000);
+    else toast('Bestätige jetzt im Android-Fenster „Aktualisieren“.', 6000);
+  } catch (err) { toast('Update fehlgeschlagen: ' + err.message, 6000); }
 });
+window.nativeUpdateProgress = pct => { if (pct >= 0) toast(`Update wird geladen … ${pct} %`, 60000); };
+window.nativeUpdateFailed = msg => toast('Update nicht installiert: ' + msg, 6000);
+
+$('#btnUpdate').addEventListener('click', () => { hidePops(); checkForUpdates(true); });
+$('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? showPop($('#settingsPop'), e.currentTarget) : hidePops());
+$('#settingsPop').addEventListener('click', e => { if (e.target.closest('[data-s="update"]')) { hidePops(); checkForUpdates(true); } });
+// In der App einmal am Tag von selbst nachsehen
+if (NATIVE) {
+  let last = 0; try { last = +localStorage.getItem('notizbuch.updateChecked') || 0; } catch {}
+  if (Date.now() - last > 20 * 3600e3) setTimeout(() => checkForUpdates(false), 4000);
+}
 
 /* ---------------- Aufrufe aus der Android-App (MainActivity.java) ---------------- */
 // „Öffnen mit …“: eine PDF aus einer anderen App (z. B. Nextcloud)

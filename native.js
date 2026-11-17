@@ -77,5 +77,11 @@
   } catch {}
   navigator.vibrate = ms => { B.vibrate(Array.isArray(ms) ? ms[0] : (ms | 0)); return true; };
 
-  window.NATIVE_APP = { version: B.appVersion() };
+  window.NATIVE_APP = {
+    version: B.appVersion(),
+    versionCode: B.appVersionCode ? B.appVersionCode() : 0,
+    // Updates: version.json von der GitHub-Seite lesen bzw. neue APK laden und installieren
+    checkUpdate: url => call('checkUpdate', url || ''),
+    installUpdate: url => call('installUpdate', url)
+  };
 })();
