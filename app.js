@@ -133,21 +133,61 @@ function penPaint(ctx, it, st, pr) {
   return st.grain ? grainPattern(ctx, c) : c;
 }
 
+/* Papiervorlagen. Auf dunklem Papier werden die Hilfslinien hell gezeichnet. */
+const BG_NAMES = { blank: 'Blanko', lined: 'Liniert', grid: 'Kariert', dots: 'Punkte', cornell: 'Cornell', music: 'Noten', mm: 'Millimeter', planner: 'Wochenplan' };
+function paperDark(p) {
+  const n = parseInt((p.paper || '#ffffff').slice(1), 16);
+  return (n >> 16 & 255) * 0.3 + (n >> 8 & 255) * 0.59 + (n & 255) * 0.11 < 110;
+}
 function drawPaper(ctx, p) {
   ctx.fillStyle = p.paper || '#fff'; ctx.fillRect(0, 0, p.w, p.h);
+  const dark = paperDark(p);
+  const soft = dark ? 'rgba(255,255,255,.14)' : '#dde3ea', line = dark ? 'rgba(255,255,255,.24)' : '#c9d6e3', strong = dark ? 'rgba(255,255,255,.45)' : '#9fb0c2';
+  const rule = (x1, y1, x2, y2) => { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); };
   ctx.save();
   if (p.bg === 'lined') {
-    ctx.strokeStyle = '#c9d6e3'; ctx.lineWidth = 0.7; ctx.beginPath();
-    for (let y = 80; y < p.h - 30; y += 24) { ctx.moveTo(28, y); ctx.lineTo(p.w - 28, y); }
+    ctx.strokeStyle = line; ctx.lineWidth = 0.7; ctx.beginPath();
+    for (let y = 80; y < p.h - 30; y += 24) rule(28, y, p.w - 28, y);
     ctx.stroke();
   } else if (p.bg === 'grid') {
-    ctx.strokeStyle = '#dde3ea'; ctx.lineWidth = 0.6; ctx.beginPath();
-    for (let x = 14.17; x < p.w; x += 14.17) { ctx.moveTo(x, 0); ctx.lineTo(x, p.h); }
-    for (let y = 14.17; y < p.h; y += 14.17) { ctx.moveTo(0, y); ctx.lineTo(p.w, y); }
+    ctx.strokeStyle = soft; ctx.lineWidth = 0.6; ctx.beginPath();
+    for (let x = 14.17; x < p.w; x += 14.17) rule(x, 0, x, p.h);
+    for (let y = 14.17; y < p.h; y += 14.17) rule(0, y, p.w, y);
     ctx.stroke();
   } else if (p.bg === 'dots') {
-    ctx.fillStyle = '#aab4bd';
+    ctx.fillStyle = dark ? 'rgba(255,255,255,.4)' : '#aab4bd';
     for (let x = 17; x < p.w; x += 17) for (let y = 17; y < p.h; y += 17) { ctx.beginPath(); ctx.arc(x, y, 0.9, 0, 7); ctx.fill(); }
+  } else if (p.bg === 'cornell') {
+    // Cornell-Methode: Stichwortspalte links, Notizen rechts, Zusammenfassung unten
+    const cue = p.w * 0.28, top = 84, sum = p.h - 150;
+    ctx.strokeStyle = line; ctx.lineWidth = 0.7; ctx.beginPath();
+    for (let y = top + 24; y < sum - 6; y += 24) rule(cue + 10, y, p.w - 28, y);
+    for (let y = sum + 30; y < p.h - 30; y += 24) rule(28, y, p.w - 28, y);
+    ctx.stroke();
+    ctx.strokeStyle = strong; ctx.lineWidth = 1.1; ctx.beginPath();
+    rule(28, top, p.w - 28, top); rule(cue, top, cue, sum); rule(28, sum, p.w - 28, sum);
+    ctx.stroke();
+  } else if (p.bg === 'music') {
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,.5)' : '#8996a3'; ctx.lineWidth = 0.6; ctx.beginPath();
+    for (let y = 70; y + 28 < p.h - 40; y += 76) for (let i = 0; i < 5; i++) rule(36, y + i * 7, p.w - 36, y + i * 7);
+    ctx.stroke();
+  } else if (p.bg === 'mm') {
+    const mm = 72 / 25.4;
+    [[1, soft, 0.25], [5, line, 0.45], [10, strong, 0.7]].forEach(([step, col, lw]) => {
+      ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath();
+      for (let x = 0; x <= p.w; x += mm * step) rule(x, 0, x, p.h);
+      for (let y = 0; y <= p.h; y += mm * step) rule(0, y, p.w, y);
+      ctx.stroke();
+    });
+  } else if (p.bg === 'planner') {
+    const days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+    const x0 = 28, x1 = p.w - 28, top = 70, rowH = (p.h - top - 30) / 7;
+    ctx.strokeStyle = strong; ctx.lineWidth = 0.9; ctx.beginPath();
+    for (let i = 0; i <= 7; i++) rule(x0, top + i * rowH, x1, top + i * rowH);
+    rule(x0, top, x0, top + 7 * rowH); rule(x1, top, x1, top + 7 * rowH); rule(x0 + 92, top, x0 + 92, top + 7 * rowH);
+    ctx.stroke();
+    ctx.fillStyle = dark ? 'rgba(255,255,255,.7)' : '#5d6b78'; ctx.font = `600 11px ${FONT}`; ctx.textBaseline = 'top';
+    days.forEach((d, i) => ctx.fillText(d, x0 + 8, top + i * rowH + 8));
   }
   ctx.restore();
 }
@@ -454,6 +494,7 @@ function layout() {
     const pe = pageEls.get(p.id);
     pe.el.style.width = p.w * sc + 'px'; pe.el.style.height = p.h * sc + 'px';
     pe.el.lastChild.textContent = `${i + 1} / ${S.note.pages.length}`;
+    pe.el.classList.toggle('marked', !!p.mark);
     renderText(pe, p);
   });
   renderSel(); scheduleRender();
@@ -552,6 +593,13 @@ function commit(p, before) {
 function applyHist(from, to, key) {
   commitText();
   const h = from.pop(); if (!h) return;
+  if (h.pages) {
+    // Seiten-Änderung (einfügen, löschen, verschieben …): ganze Seitenliste zurücksetzen
+    const st = wrap.scrollTop;
+    S.note.pages = JSON.parse(h[key]); setSel(null);
+    buildPages(); buildPanel(); wrap.scrollTop = st; markDirty();
+    to.push(h); updUndo(); return;
+  }
   const p = pageById(h.pid);
   if (p) { p.items = JSON.parse(h[key]); setSel(null); refreshPage(p); markDirty(); queueThumb(p.id); }
   to.push(h); updUndo();
@@ -1462,6 +1510,8 @@ $('#menuPop').addEventListener('click', async e => {
   else if (m === 'dupPage') duplicatePage();
   else if (m === 'bgPage') openBgDlg();
   else if (m === 'paste') pasteClip();
+  else if (m === 'insPdf') pickInsertPdf();
+  else if (m === 'mark') toggleMark();
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
@@ -1487,63 +1537,169 @@ $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.ch
 
 /* ---------------- Seiten: einfügen, duplizieren, verschieben, löschen ---------------- */
 function pagesChanged() { layout(); buildPanel(); markDirty(); }
-function insertPage(i, p) {
-  S.note.pages.splice(i, 0, p);
-  const next = S.note.pages[i + 1];
-  addPageEl(p, next ? pageEls.get(next.id).el : null);
+/* Seiten-Änderungen lassen sich als Ganzes rückgängig machen */
+const pagesSnap = () => JSON.stringify(S.note.pages);
+function pushPagesHist(before) {
+  S.undo.push({ pages: true, before, after: pagesSnap() });
+  if (S.undo.length > 60) S.undo.shift();
+  S.redo.length = 0; updUndo();
+}
+function insertPages(i, list) {
+  S.note.pages.splice(i, 0, ...list);
+  const next = S.note.pages[i + list.length];
+  for (const p of list) addPageEl(p, next ? pageEls.get(next.id).el : null);
   pagesChanged();
-  requestAnimationFrame(() => pageEls.get(p.id)?.el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  requestAnimationFrame(() => pageEls.get(list[0].id)?.el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 function addPage(after = currentPage()) {
-  const i = S.note.pages.indexOf(after);
+  commitText();
+  const before = pagesSnap(), i = S.note.pages.indexOf(after);
   const tpl = after.pdf == null ? after : [...S.note.pages].reverse().find(p => p.pdf == null);
-  insertPage(i + 1, { id: uid(), w: after.w, h: after.h, bg: tpl ? tpl.bg : 'blank', paper: tpl?.paper, pdf: null, items: [] });
+  insertPages(i + 1, [{ id: uid(), w: after.w, h: after.h, bg: tpl ? tpl.bg : 'blank', paper: tpl?.paper, pdf: null, items: [] }]);
+  pushPagesHist(before);
   toast(`Seite ${i + 2} eingefügt.`);
 }
 function duplicatePage(p = currentPage()) {
   commitText();
-  const i = S.note.pages.indexOf(p), c = structuredClone(p);
-  c.id = uid(); c.items.forEach(it => { it.id = uid(); });
-  insertPage(i + 1, c);
+  const before = pagesSnap(), i = S.note.pages.indexOf(p), c = structuredClone(p);
+  c.id = uid(); c.mark = false; c.items.forEach(it => { it.id = uid(); });
+  insertPages(i + 1, [c]);
+  pushPagesHist(before);
   toast(`Seite ${i + 1} dupliziert.`);
 }
-function movePage(p, d) {
-  const a = S.note.pages, i = a.indexOf(p), j = i + d;
-  if (j < 0 || j >= a.length) return;
-  a.splice(i, 1); a.splice(j, 0, p);
-  const next = a[j + 1];
+/* Seite vor die Seite mit beforeId setzen (ohne beforeId: ans Ende) */
+function movePageTo(p, beforeId) {
+  commitText();
+  const before = pagesSnap(), a = S.note.pages, i = a.indexOf(p);
+  a.splice(i, 1);
+  const j = beforeId ? a.findIndex(x => x.id === beforeId) : a.length;
+  a.splice(j < 0 ? a.length : j, 0, p);
+  if (a.indexOf(p) === i) return;
+  const next = a[a.indexOf(p) + 1];
   pagesHost.insertBefore(pageEls.get(p.id).el, next ? pageEls.get(next.id).el : null);
-  pagesChanged();
+  pagesChanged(); pushPagesHist(before);
+}
+function movePage(p, d) {
+  const a = S.note.pages, j = a.indexOf(p) + d;
+  if (j < 0 || j >= a.length) return;
+  movePageTo(p, d < 0 ? a[j].id : a[j + 1]?.id);
 }
 function deletePage(p = currentPage()) {
   if (S.note.pages.length < 2) return toast('Die letzte Seite kann nicht gelöscht werden.');
-  const i = S.note.pages.indexOf(p);
-  if (!confirm(`Seite ${i + 1} löschen? Das lässt sich nicht rückgängig machen.`)) return;
   commitText();
+  const before = pagesSnap(), i = S.note.pages.indexOf(p);
   S.note.pages.splice(i, 1);
   const pe = pageEls.get(p.id); io.unobserve(pe.el); pe.el.remove(); pageEls.delete(p.id);
-  S.undo = S.undo.filter(h => h.pid !== p.id); S.redo = S.redo.filter(h => h.pid !== p.id); updUndo();
   if (S.sel?.p === p) setSel(null);
-  pagesChanged();
+  pagesChanged(); pushPagesHist(before);
+  toast(`Seite ${i + 1} gelöscht. „Rückgängig“ holt sie zurück.`, 4000);
 }
+function toggleMark(p = currentPage()) {
+  p.mark = !p.mark;
+  pageEls.get(p.id)?.el.classList.toggle('marked', !!p.mark);
+  buildPanel(); markDirty();
+  toast(p.mark ? 'Lesezeichen gesetzt.' : 'Lesezeichen entfernt.', 1500);
+}
+
+/* PDF-Seiten aus einer anderen Datei hinter einer Seite einfügen.
+   Die Notiz hat genau eine Grund-PDF; neue Seiten werden an diese angehängt. */
+async function insertPdfPages(file, after = currentPage()) {
+  commitText();
+  const add = new Uint8Array(await file.arrayBuffer());
+  let merged, offset = 0, sizes = [];
+  try {
+    const { PDFDocument } = PDFLib;
+    const src = await PDFDocument.load(add, { ignoreEncryption: true });
+    if (S.origBytes) {
+      const base = await PDFDocument.load(S.origBytes, { ignoreEncryption: true });
+      offset = base.getPageCount();
+      (await base.copyPages(src, src.getPageIndices())).forEach(pg => base.addPage(pg));
+      merged = await base.save();
+    } else merged = add;
+    const doc = await pdfjsLib.getDocument({ data: merged.slice() }).promise;
+    for (let i = offset; i < doc.numPages; i++) { const vp = (await doc.getPage(i + 1)).getViewport({ scale: 1 }); sizes.push([vp.width, vp.height]); }
+    const old = S.pdf;
+    S.pdf = doc; S.origBytes = new Uint8Array(merged);
+    await dbPut('blobs', { id: S.note.id, bytes: S.origBytes.slice().buffer });
+    old?.destroy();
+  } catch (e) { return toast('Diese PDF konnte nicht eingefügt werden: ' + e.message, 6000); }
+  const before = pagesSnap(), i = S.note.pages.indexOf(after);
+  insertPages(i + 1, sizes.map(([w, h], k) => ({ id: uid(), w, h, bg: 'pdf', pdf: offset + k, items: [] })));
+  pushPagesHist(before);
+  pageEls.forEach(pe => { pe.sc = null; }); scheduleRender();
+  toast(`${sizes.length} PDF-Seite(n) aus „${file.name}“ eingefügt.`, 4000);
+}
+let insertAfter = null;
+async function pickInsertPdf(after = currentPage()) {
+  insertAfter = after;
+  if (!FSA) return $('#fileInsert').click();
+  try {
+    const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
+    await insertPdfPages(await h.getFile(), after);
+  } catch (e) { if (e.name !== 'AbortError') toast('Öffnen fehlgeschlagen: ' + e.message, 6000); }
+}
+$('#fileInsert').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f && insertAfter) insertPdfPages(f, insertAfter); });
 
 /* ---------------- Seitenübersicht (Vorschaubilder am Rand) ---------------- */
 const panel = $('#pagePanel'), thumbList = $('#thumbList');
 const thumbEls = new Map(), thumbQueue = new Set();
 let thumbT = 0, pageTarget = null;
+let onlyMarks = false;
+const RIBBON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18l-5-4-5 4z" fill="var(--rf, none)" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
 function buildPanel() {
   thumbList.innerHTML = ''; thumbEls.clear(); thumbQueue.clear();
   if (!S.note || panel.hidden) return;
+  if (onlyMarks && !S.note.pages.some(p => p.mark)) onlyMarks = false;
+  $('#btnMarks').classList.toggle('on', onlyMarks);
   S.note.pages.forEach((p, i) => {
+    if (onlyMarks && !p.mark) return;
     const el = document.createElement('div');
-    el.className = 'thumb-item'; el.dataset.id = p.id;
+    el.className = 'thumb-item' + (p.mark ? ' marked' : ''); el.dataset.id = p.id;
     el.innerHTML = `<button class="thumb-open" aria-label="Zu Seite ${i + 1}"><canvas width="10" height="10"></canvas></button>
-      <div class="thumb-row"><span class="thumb-no">${i + 1}</span><button class="thumb-menu" aria-label="Optionen für Seite ${i + 1}">⋯</button></div>`;
+      <div class="thumb-row"><span class="thumb-grip" title="Ziehen zum Verschieben"${onlyMarks ? ' hidden' : ''}>⠿</span><span class="thumb-no">${i + 1}</span>
+      <button class="thumb-mark" aria-label="Lesezeichen für Seite ${i + 1}" title="Lesezeichen">${RIBBON}</button>
+      <button class="thumb-menu" aria-label="Optionen für Seite ${i + 1}">⋯</button></div>`;
     el.querySelector('canvas').style.aspectRatio = `${p.w} / ${p.h}`;
     thumbList.appendChild(el); thumbEls.set(p.id, el); queueThumb(p.id);
   });
   markCurrentThumb();
 }
+$('#btnMarks').addEventListener('click', () => {
+  if (!onlyMarks && !S.note.pages.some(p => p.mark)) return toast('Noch keine Lesezeichen. Tippe unter einer Seite auf das Fähnchen.', 3500);
+  onlyMarks = !onlyMarks; buildPanel();
+});
+
+/* Seiten in der Übersicht am Griff ⠿ ziehen */
+let drag = null;
+thumbList.addEventListener('pointerdown', e => {
+  const g = e.target.closest('.thumb-grip'); if (!g || drag) return;
+  e.preventDefault();
+  const el = g.closest('.thumb-item');
+  drag = { el, pid: e.pointerId, y0: e.clientY, s0: thumbList.scrollTop, before: undefined };
+  el.classList.add('dragging');
+  try { g.setPointerCapture(e.pointerId); } catch {}
+});
+thumbList.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const lr = thumbList.getBoundingClientRect();
+  if (e.clientY < lr.top + 44) thumbList.scrollTop -= 14; else if (e.clientY > lr.bottom - 44) thumbList.scrollTop += 14;
+  drag.el.style.transform = `translateY(${e.clientY - drag.y0 + thumbList.scrollTop - drag.s0}px)`;
+  const others = [...thumbList.children].filter(n => n !== drag.el);
+  let idx = others.length;
+  for (let i = 0; i < others.length; i++) { const r = others[i].getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) { idx = i; break; } }
+  others.forEach((n, i) => { n.classList.toggle('drop-before', i === idx); n.classList.toggle('drop-after', idx === others.length && i === others.length - 1); });
+  drag.before = others[idx]?.dataset.id || null;
+});
+function endDrag(e) {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const d = drag; drag = null;
+  d.el.classList.remove('dragging'); d.el.style.transform = '';
+  thumbList.querySelectorAll('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
+  const p = pageById(d.el.dataset.id);
+  if (e.type === 'pointerup' && p && d.before !== undefined) movePageTo(p, d.before);
+}
+thumbList.addEventListener('pointerup', endDrag);
+thumbList.addEventListener('pointercancel', endDrag);
 function queueThumb(id) {
   if (panel.hidden) return;
   thumbQueue.add(id); clearTimeout(thumbT); thumbT = setTimeout(flushThumbs, 300);
@@ -1578,10 +1734,13 @@ $('#btnPanelAdd').addEventListener('click', () => addPage(S.note.pages[S.note.pa
 thumbList.addEventListener('click', e => {
   const item = e.target.closest('.thumb-item'); if (!item) return;
   const p = pageById(item.dataset.id); if (!p) return;
+  if (e.target.closest('.thumb-mark')) return toggleMark(p);
+  if (e.target.closest('.thumb-grip')) return;
   const menu = e.target.closest('.thumb-menu');
   if (menu) {
     pageTarget = p;
     const i = S.note.pages.indexOf(p), pop = $('#pagePop');
+    pop.querySelector('[data-p="mark"]').textContent = p.mark ? 'Lesezeichen entfernen' : 'Lesezeichen setzen';
     pop.querySelector('[data-p="up"]').disabled = i === 0;
     pop.querySelector('[data-p="down"]').disabled = i === S.note.pages.length - 1;
     pop.querySelector('[data-p="del"]').disabled = S.note.pages.length < 2;
@@ -1594,6 +1753,8 @@ $('#pagePop').addEventListener('click', e => {
   if (a === 'dup') duplicatePage(p);
   else if (a === 'add') addPage(p);
   else if (a === 'bg') openBgDlg(p);
+  else if (a === 'mark') toggleMark(p);
+  else if (a === 'pdf') pickInsertPdf(p);
   else if (a === 'up') movePage(p, -1);
   else if (a === 'down') movePage(p, 1);
   else if (a === 'del') deletePage(p);
@@ -1617,13 +1778,14 @@ function openBgDlg(p = currentPage()) {
 $('#bgDlg').addEventListener('close', () => {
   if ($('#bgDlg').returnValue !== 'ok' || !S.note || !bgTarget) return;
   const f = new FormData($('#bgForm'));
-  const targets = (f.get('bgScope') === 'all' ? S.note.pages : [bgTarget]).filter(p => p.pdf == null);
+  const before = pagesSnap();
+  const targets = (f.get('bgScope') === 'all' ? S.note.pages : [S.note.pages.find(p => p.id === bgTarget.id)]).filter(p => p && p.pdf == null);
   for (const p of targets) {
     p.bg = f.get('bgPattern') || 'blank'; p.paper = f.get('bgColor') || '#ffffff';
     const pe = pageEls.get(p.id); if (pe) pe.sc = null;
     queueThumb(p.id);
   }
-  scheduleRender(); markDirty();
+  scheduleRender(); markDirty(); pushPagesHist(before);
   toast(targets.length > 1 ? `Hintergrund für ${targets.length} Seiten geändert.` : 'Hintergrund geändert.');
 });
 
@@ -1939,3 +2101,14 @@ if ('launchQueue' in window) {
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+/* Vorschaubilder der Papiervorlagen in den Auswahldialogen */
+function paperPreviews() {
+  document.querySelectorAll('.paper-pick input').forEach(inp => {
+    const c = document.createElement('canvas'); c.width = 120; c.height = 170;
+    const ctx = c.getContext('2d'); ctx.setTransform(0.6, 0, 0, 0.6, 0, 0);
+    drawPaper(ctx, { w: 200, h: 283, bg: inp.value });
+    inp.nextElementSibling.style.backgroundImage = `url(${c.toDataURL()})`;
+  });
+}
+paperPreviews();

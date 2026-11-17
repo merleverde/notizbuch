@@ -131,7 +131,7 @@
 
   <div class="ed-body">
     <aside id="pagePanel" class="page-panel" hidden aria-label="Seitenübersicht">
-      <div class="panel-head"><b>Seiten</b><button id="btnPanelAdd" class="btn small" title="Neue Seite am Ende">+ Seite</button></div>
+      <div class="panel-head"><b>Seiten</b><button id="btnMarks" class="icon-btn small" title="Nur Seiten mit Lesezeichen zeigen" aria-label="Nur Lesezeichen zeigen"><svg viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button><button id="btnPanelAdd" class="btn small" title="Neue Seite am Ende">+ Seite</button></div>
       <div id="thumbList" class="thumb-list"></div>
     </aside>
     <main id="pagesWrap"><div id="pages"></div></main>
@@ -140,7 +140,9 @@
   <div id="pagePop" class="popover" hidden>
     <button data-p="dup">Seite duplizieren</button>
     <button data-p="add">Leere Seite danach einfügen</button>
+    <button data-p="pdf">PDF-Seiten danach einfügen …</button>
     <button data-p="bg">Hintergrund ändern …</button>
+    <button data-p="mark">Lesezeichen setzen</button>
     <hr>
     <button data-p="up">Nach oben verschieben</button>
     <button data-p="down">Nach unten verschieben</button>
@@ -152,6 +154,8 @@
     <button data-m="addPage">Seite einfügen</button>
     <button data-m="dupPage">Aktuelle Seite duplizieren</button>
     <button data-m="bgPage">Hintergrund ändern …</button>
+    <button data-m="insPdf">PDF-Seiten einfügen …</button>
+    <button data-m="mark">Lesezeichen an/aus</button>
     <button data-m="paste">Einfügen</button>
     <button data-m="delPage">Aktuelle Seite löschen</button>
     <hr>
@@ -187,6 +191,10 @@
       <label><input type="radio" name="bgPattern" value="lined"><span class="pp pp-lined"></span>Liniert</label>
       <label><input type="radio" name="bgPattern" value="grid"><span class="pp pp-grid"></span>Kariert</label>
       <label><input type="radio" name="bgPattern" value="dots"><span class="pp pp-dots"></span>Punkte</label>
+      <label><input type="radio" name="bgPattern" value="cornell"><span class="pp"></span>Cornell</label>
+      <label><input type="radio" name="bgPattern" value="music"><span class="pp"></span>Noten</label>
+      <label><input type="radio" name="bgPattern" value="mm"><span class="pp"></span>Millimeter</label>
+      <label><input type="radio" name="bgPattern" value="planner"><span class="pp"></span>Wochenplan</label>
     </fieldset>
     <fieldset class="paper-colors">
       <legend>Papierfarbe</legend>
@@ -196,6 +204,7 @@
       <label title="Grün"><input type="radio" name="bgColor" value="#e9f4ea"><span style="background:#e9f4ea"></span></label>
       <label title="Blau"><input type="radio" name="bgColor" value="#e8f1fa"><span style="background:#e8f1fa"></span></label>
       <label title="Rosa"><input type="radio" name="bgColor" value="#fbeaee"><span style="background:#fbeaee"></span></label>
+      <label title="Dunkel"><input type="radio" name="bgColor" value="#262b30"><span style="background:#262b30"></span></label>
     </fieldset>
     <fieldset class="orient">
       <legend>Anwenden auf</legend>
@@ -240,6 +249,10 @@
       <label><input type="radio" name="paper" value="lined" checked><span class="pp pp-lined"></span>Liniert</label>
       <label><input type="radio" name="paper" value="grid"><span class="pp pp-grid"></span>Kariert</label>
       <label><input type="radio" name="paper" value="dots"><span class="pp pp-dots"></span>Punkte</label>
+      <label><input type="radio" name="paper" value="cornell"><span class="pp"></span>Cornell</label>
+      <label><input type="radio" name="paper" value="music"><span class="pp"></span>Noten</label>
+      <label><input type="radio" name="paper" value="mm"><span class="pp"></span>Millimeter</label>
+      <label><input type="radio" name="paper" value="planner"><span class="pp"></span>Wochenplan</label>
     </fieldset>
     <fieldset class="orient">
       <legend>Format</legend>
@@ -265,6 +278,7 @@
   <div class="dlg-actions"><button data-choice="cancel" class="btn">Weiter bearbeiten</button></div>
 </dialog>
 
+<input type="file" id="fileInsert" accept="application/pdf,.pdf" hidden>
 <input type="file" id="fileBackup" accept="application/json,.json" hidden>
 <input type="file" id="filePdf" accept="application/pdf,.pdf" hidden>
 <input type="file" id="fileImg" accept="image/*" hidden>

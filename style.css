@@ -371,3 +371,24 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 .selbox.below .rot { top: auto; bottom: -40px; }
 .selbox.below .rot::after { top: auto; bottom: 100%; }
 .selbox.right .selbar { left: auto; right: -2px; }
+.pp { background-size: cover; background-position: top left; }
+.panel-head { gap: 6px; }
+.panel-head b { flex: 1; }
+.icon-btn.small { width: 30px; height: 30px; border-radius: 8px; }
+.icon-btn.small svg { width: 17px; height: 17px; }
+.thumb-row { gap: 2px; }
+.thumb-no { flex: 1; }
+.thumb-grip { width: 26px; height: 26px; display: grid; place-items: center; color: var(--muted); cursor: grab; touch-action: none; font-size: 1.05rem; border-radius: 6px; user-select: none; -webkit-user-select: none; }
+.thumb-grip:hover { background: var(--surface-2); }
+.thumb-mark { border: 0; background: none; width: 28px; height: 26px; border-radius: 8px; color: var(--muted); display: grid; place-items: center; padding: 0; }
+.thumb-mark svg { width: 16px; height: 16px; }
+.thumb-item.marked .thumb-mark { color: var(--danger); --rf: currentColor; }
+.thumb-item.dragging { position: relative; z-index: 2; opacity: .85; pointer-events: none; }
+.thumb-item.dragging .thumb-open { box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.thumb-item.drop-before { box-shadow: 0 -8px 0 -5px var(--accent); }
+.thumb-item.drop-after { box-shadow: 0 8px 0 -5px var(--accent); }
+.page.marked::before {
+  content: ""; position: absolute; top: -4px; right: 22px; width: 20px; height: 34px; z-index: 2;
+  background: var(--danger); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%); pointer-events: none;
+}
+.paper-pick { row-gap: 14px; }
