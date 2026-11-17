@@ -633,8 +633,159 @@ function updState() {
 
 const pdfName = () => (S.note.title || 'Notiz').replace(/[\\/:*?"<>|]+/g, '-') + '.pdf';
 
+/* ---------------- PDF-Export: Striche als echte Linien ----------------
+   PdfCtx versteht den Teil der Canvas-Befehle, den drawPaper/drawStroke/drawShape benutzen, und schreibt
+   daraus PDF-Zeichenbefehle. So bleibt Schrift in der gespeicherten PDF bei jedem Zoom scharf.
+   Nur Bleistift-Körnung und Text werden weiterhin als Bild eingebettet. */
+function parseColor(c) {
+  if (typeof c !== 'string') return null;
+  let m;
+  if ((m = /^#([0-9a-f]{3})$/i.exec(c))) return [...m[1]].map(h => parseInt(h + h, 16) / 255).concat(1);
+  if ((m = /^#([0-9a-f]{6})$/i.exec(c))) { const n = parseInt(m[1], 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255, 1]; }
+  if ((m = /^rgba?\(([^)]+)\)$/i.exec(c))) { const v = m[1].split(',').map(Number); return [v[0] / 255, v[1] / 255, v[2] / 255, v[3] ?? 1]; }
+  return null;
+}
+class PdfCtx {
+  constructor(doc, page) {
+    this.doc = doc; this.page = page; this.ops = []; this.path = []; this.stack = []; this.gs = new Map(); this.cur = {};
+    Object.assign(this, { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, lineCap: 'butt', lineJoin: 'miter', globalAlpha: 1, font: '', textBaseline: 'alphabetic', dash: [] });
+  }
+  save() { const { fillStyle, strokeStyle, lineWidth, lineCap, lineJoin, globalAlpha, font, textBaseline, dash } = this; this.stack.push({ fillStyle, strokeStyle, lineWidth, lineCap, lineJoin, globalAlpha, font, textBaseline, dash }); }
+  restore() { Object.assign(this, this.stack.pop()); }
+  setLineDash(d) { this.dash = d; }
+  beginPath() { this.path = []; }
+  moveTo(x, y) { this.path.push(PDFLib.moveTo(x, y)); this.px = x; this.py = y; }
+  lineTo(x, y) { this.path.push(PDFLib.lineTo(x, y)); this.px = x; this.py = y; }
+  closePath() { this.path.push(PDFLib.closePath()); }
+  quadraticCurveTo(cx, cy, x, y) {
+    const { px, py } = this;
+    this.path.push(PDFLib.appendBezierCurve(px + 2 / 3 * (cx - px), py + 2 / 3 * (cy - py), x + 2 / 3 * (cx - x), y + 2 / 3 * (cy - y), x, y));
+    this.px = x; this.py = y;
+  }
+  rect(x, y, w, h) { this.moveTo(x, y); this.lineTo(x + w, y); this.lineTo(x + w, y + h); this.lineTo(x, y + h); this.closePath(); }
+  ellipse(cx, cy, rx, ry) {
+    const k = 0.5522847498;
+    this.moveTo(cx + rx, cy);
+    this.path.push(PDFLib.appendBezierCurve(cx + rx, cy + ry * k, cx + rx * k, cy + ry, cx, cy + ry),
+      PDFLib.appendBezierCurve(cx - rx * k, cy + ry, cx - rx, cy + ry * k, cx - rx, cy),
+      PDFLib.appendBezierCurve(cx - rx, cy - ry * k, cx - rx * k, cy - ry, cx, cy - ry),
+      PDFLib.appendBezierCurve(cx + rx * k, cy - ry, cx + rx, cy - ry * k, cx + rx, cy), PDFLib.closePath());
+  }
+  arc(cx, cy, r) { this.ellipse(cx, cy, r, r); }                // im Code kommen nur volle Kreise vor
+  // Zustand nur schreiben, wenn er sich geändert hat (hält die Datei klein)
+  set(key, val, op) { if (this.cur[key] !== val) { this.cur[key] = val; this.ops.push(op()); } }
+  alpha(a, stroke) {
+    a = Math.round(clamp(a, 0, 1) * 100) / 100;
+    const id = (stroke ? 'S' : 'F') + a;
+    if (!this.gs.has(id)) this.gs.set(id, this.page.node.newExtGState('GS', this.doc.context.obj(stroke ? { CA: a } : { ca: a })));
+    this.set(stroke ? 'CA' : 'ca', a, () => PDFLib.setGraphicsState(this.gs.get(id)));
+  }
+  stroke() {
+    const c = parseColor(this.strokeStyle); if (!c) throw new Error('Farbe nicht als Linie darstellbar');
+    this.set('sc', c.slice(0, 3).join(), () => PDFLib.setStrokingRgbColor(c[0], c[1], c[2]));
+    this.alpha(c[3] * this.globalAlpha, true);
+    this.set('lw', this.lineWidth, () => PDFLib.setLineWidth(this.lineWidth));
+    this.set('lc', this.lineCap, () => PDFLib.setLineCap({ butt: 0, round: 1, square: 2 }[this.lineCap] ?? 0));
+    this.set('lj', this.lineJoin, () => PDFLib.setLineJoin({ miter: 0, round: 1, bevel: 2 }[this.lineJoin] ?? 0));
+    this.set('d', this.dash.join(), () => PDFLib.setDashPattern(this.dash, 0));
+    this.ops.push(...this.path, PDFLib.stroke());
+  }
+  fill() {
+    const c = parseColor(this.fillStyle); if (!c) throw new Error('Farbe nicht als Fläche darstellbar');
+    this.set('fc', c.slice(0, 3).join(), () => PDFLib.setFillingRgbColor(c[0], c[1], c[2]));
+    this.alpha(c[3] * this.globalAlpha, false);
+    this.ops.push(...this.path, PDFLib.fill());
+  }
+  fillRect(x, y, w, h) { const keep = this.path; this.path = []; this.rect(x, y, w, h); this.fill(); this.path = keep; }
+  fillText(text, x, y) {
+    const size = parseFloat(/(\d+(?:\.\d+)?)px/.exec(this.font)?.[1] || 11), c = parseColor(this.fillStyle) || [0, 0, 0, 1];
+    this.set('fc', c.slice(0, 3).join(), () => PDFLib.setFillingRgbColor(c[0], c[1], c[2]));
+    this.alpha(c[3] * this.globalAlpha, false);
+    const dy = this.textBaseline === 'top' ? size * 0.8 : 0;
+    // Die Seite ist für die Zeichenbefehle gespiegelt (y nach unten); Text dafür lokal zurückspiegeln
+    this.ops.push(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(1, 0, 0, -1, x, y + dy), PDFLib.beginText(),
+      PDFLib.setFontAndSize(this.fontKey, size), PDFLib.showText(this.fontObj.encodeText(text)), PDFLib.endText(), PDFLib.popGraphicsState());
+  }
+  drawXObject(ref, mats) {
+    const key = this.page.node.newXObject('Img', ref);
+    this.ops.push(PDFLib.pushGraphicsState(), ...mats.map(m => PDFLib.concatTransformationMatrix(...m)), PDFLib.drawObject(key), PDFLib.popGraphicsState());
+    this.cur = {};
+  }
+}
+const needsRaster = it => it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain;
+function dataUrlBytes(url) { return b64decode(url.slice(url.indexOf(',') + 1)); }
+
+/* Ausschnitt mit den übergebenen Elementen als PNG rendern (für Bleistift und Text) */
+async function rasterPatch(out, p, items, asText) {
+  const b = unionBox(items.map(bbox)), m = 3;
+  const x = Math.max(0, b.x - m), y = Math.max(0, b.y - m), w = Math.min(p.w, b.x + b.w + m) - x, h = Math.min(p.h, b.y + b.h + m) - y;
+  if (w <= 0 || h <= 0) return null;
+  const R = Math.min(3, Math.sqrt(12e6 / (w * h)));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * R)); c.height = Math.max(1, Math.round(h * R));
+  const ctx = c.getContext('2d'); ctx.setTransform(R, 0, 0, R, -x * R, -y * R);
+  if (asText) items.forEach(it => drawText(ctx, it)); else drawItems(ctx, items);
+  const png = await new Promise(res => c.toBlob(bl => bl.arrayBuffer().then(res), 'image/png'));
+  return { img: await out.embedPng(png), x, y, w, h };
+}
+
+async function exportOverlay(out, pg, p, withPaper) {
+  const cb = pg.getCropBox(), W = cb.width, H = cb.height;
+  const rot = ((pg.getRotation().angle % 360) + 360) % 360;
+  // Anzeige-Koordinaten (Ursprung oben links, y nach unten) → PDF-Koordinaten der evtl. gedrehten Seite
+  const base = rot === 90 ? [0, 1, 1, 0, cb.x, cb.y] : rot === 180 ? [-1, 0, 0, 1, cb.x + W, cb.y]
+    : rot === 270 ? [0, -1, -1, 0, cb.x + W, cb.y + H] : [1, 0, 0, -1, cb.x, cb.y + H];
+  try {
+    const v = new PdfCtx(out, pg);
+    if (withPaper) {
+      if (p.bg === 'planner') {
+        v.fontObj = out._nbFont ||= await out.embedFont(PDFLib.StandardFonts.HelveticaBold);
+        v.fontKey = pg.node.newFontDictionary('F', v.fontObj.ref);
+      }
+      drawPaper(v, p);
+    }
+    await loadImages(p.items);
+    let batch = [];
+    const flush = async asText => {
+      if (!batch.length) return;
+      const r = await rasterPatch(out, p, batch, asText); batch = [];
+      if (r) v.drawXObject(r.img.ref, [[r.w, 0, 0, -r.h, r.x, r.y + r.h]]);
+    };
+    const embedded = out._nbImgs ||= new Map();
+    for (const it of p.items) {
+      if (it.t === 'text') continue;
+      if (needsRaster(it)) { batch.push(it); continue; }
+      await flush(false);
+      if (it.t === 'img') {
+        // Fotos unverändert einbetten statt neu zu rastern
+        if (!embedded.has(it.src)) embedded.set(it.src, await (it.src.startsWith('data:image/png') ? out.embedPng(dataUrlBytes(it.src)) : out.embedJpg(dataUrlBytes(it.src))));
+        const c = Math.cos(it.rot || 0), s = Math.sin(it.rot || 0);
+        v.drawXObject(embedded.get(it.src).ref, [[1, 0, 0, 1, it.x + it.w / 2, it.y + it.h / 2], [c, s, -s, c, 0, 0], [it.w, 0, 0, -it.h, -it.w / 2, it.h / 2]]);
+      } else if (it.t === 'shape') drawShape(v, it);
+      else drawStroke(v, it);
+    }
+    await flush(false);
+    batch = p.items.filter(it => it.t === 'text'); await flush(true);
+    if (!v.ops.length) return;
+    pg.node.normalize();
+    pg.pushOperators(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(...base), ...v.ops, PDFLib.popGraphicsState());
+  } catch (err) {
+    // Sicherheitsnetz: klappt die Linien-Ausgabe nicht, die Seite wie früher als Bild speichern
+    console.warn('Vektor-Export fehlgeschlagen, nutze Bild:', err);
+    const R = Math.min(2.6, Math.sqrt(14e6 / (p.w * p.h)));
+    const c = document.createElement('canvas');
+    c.width = Math.round(p.w * R); c.height = Math.round(p.h * R);
+    const ctx = c.getContext('2d'); ctx.setTransform(R, 0, 0, R, 0, 0);
+    await paintOverlay(ctx, p, withPaper);
+    const png = await new Promise(res => c.toBlob(b => b.arrayBuffer().then(res), 'image/png'));
+    const img = await out.embedPng(png), { degrees } = PDFLib;
+    pg.drawImage(img, rot === 90 ? { x: cb.x + W, y: cb.y, width: H, height: W, rotate: degrees(90) }
+      : rot === 180 ? { x: cb.x + W, y: cb.y + H, width: W, height: H, rotate: degrees(180) }
+      : rot === 270 ? { x: cb.x, y: cb.y + H, width: H, height: W, rotate: degrees(270) }
+      : { x: cb.x, y: cb.y, width: W, height: H });
+  }
+}
 async function buildPdf() {
-  const { PDFDocument, degrees } = PDFLib;
+  const { PDFDocument } = PDFLib;
   const out = await PDFDocument.create();
   const src = S.origBytes ? await PDFDocument.load(S.origBytes, { ignoreEncryption: true }) : null;
   for (const p of S.note.pages) {
@@ -642,20 +793,7 @@ async function buildPdf() {
     if (p.pdf != null && src) { [pg] = await out.copyPages(src, [p.pdf]); out.addPage(pg); }
     else pg = out.addPage([p.w, p.h]);
     if (p.pdf != null && src && !p.items.length) continue;
-    const R = Math.min(2.6, Math.sqrt(14e6 / (p.w * p.h)));
-    const c = document.createElement('canvas');
-    c.width = Math.round(p.w * R); c.height = Math.round(p.h * R);
-    const ctx = c.getContext('2d'); ctx.setTransform(R, 0, 0, R, 0, 0);
-    await paintOverlay(ctx, p, p.pdf == null || !src);
-    const png = await new Promise(res => c.toBlob(b => b.arrayBuffer().then(res), 'image/png'));
-    const img = await out.embedPng(png);
-    const cb = pg.getCropBox(), W = cb.width, H = cb.height;
-    const rot = ((pg.getRotation().angle % 360) + 360) % 360;
-    const o = rot === 90 ? { x: cb.x + W, y: cb.y, width: H, height: W, rotate: degrees(90) }
-      : rot === 180 ? { x: cb.x + W, y: cb.y + H, width: W, height: H, rotate: degrees(180) }
-      : rot === 270 ? { x: cb.x, y: cb.y + H, width: H, height: W, rotate: degrees(270) }
-      : { x: cb.x, y: cb.y, width: W, height: H };
-    pg.drawImage(img, o);
+    await exportOverlay(out, pg, p, p.pdf == null || !src);
   }
   out.setTitle(S.note.title || 'Notiz');
   if (prefs.editable) {
