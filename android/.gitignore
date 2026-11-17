@@ -5,8 +5,6 @@ app/build/
 local.properties
 .idea/
 *.iml
-# Die Web-App wird beim Bauen aus dem Hauptordner hierher kopiert
-app/src/main/assets/www/
 
 # Signaturschlüssel-Zugang (Passwort) bleibt lokal
 keystore.properties

@@ -43,23 +43,15 @@ dependencies {
     implementation 'androidx.activity:activity:1.10.1'
 }
 
-// Die Web-App liegt im Hauptordner des Repositorys. Vor jedem Bau wird sie in die App kopiert,
-// damit die Android-App immer denselben Stand wie die Webseite hat.
-def copyWeb = tasks.register('copyWeb', Copy) {
-    from(rootProject.file('..')) {
-        include 'index.html', 'native.js', 'app.js', 'style.css', 'manifest.webmanifest', 'icon.svg', 'icon-maskable.svg', 'vendor/**'
-    }
-    into 'src/main/assets/www'
-}
-tasks.named('preBuild') { dependsOn copyWeb }
+// Die Oberfläche der App (HTML/JS/CSS) liegt in app/src/main/assets/www.
 
 // Neue Version verÃ¶ffentlichen:  .\gradlew.bat publishApk
-// Baut die signierte APK und legt sie mit version.json in ../download/.
+// Baut die signierte APK und legt sie mit version.json in ../docs/download/ (öffentlicher Download-Bereich).
 // Nach Commit + Push findet â€žNach Updates suchenâ€œ in der App die neue Version.
 tasks.register('publishApk') {
     dependsOn 'assembleRelease'
     doLast {
-        def dl = rootProject.file('../download')
+        def dl = rootProject.file('../docs/download')
         dl.mkdirs()
         def apk = file('build/outputs/apk/release/app-release.apk')
         if (!apk.exists()) throw new GradleException('Keine Release-APK gefunden: ' + apk)

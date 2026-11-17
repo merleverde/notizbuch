@@ -2554,29 +2554,12 @@ function applyUpdate() {
   if (S.note || saving) { updateReady = true; return; }
   location.reload();
 }
-// Web: Updates kommen über den Service Worker (siehe sw.js)
-if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  const hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register('sw.js').then(reg => {
-    // beim Zurückkehren in die App nach Updates schauen
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
-  }).catch(() => {});
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) applyUpdate(); });
-}
-
 /* Android-App: version.json auf der GitHub-Seite sagt, welche App-Version aktuell ist.
    Ist sie neuer, wird die APK geladen und der Android-Installer geöffnet (der Nutzer bestätigt dort). */
 const UPDATE_INFO = 'https://merleverde.github.io/notizbuch/download/version.json';
 let updateInfo = null;
 async function checkForUpdates(manual) {
-  if (!NATIVE) {
-    const reg = await navigator.serviceWorker?.getRegistration();
-    if (!reg) return manual && toast('Updates werden hier nicht unterstützt.');
-    if (manual) toast('Suche nach Updates …', 2000);
-    try { await reg.update(); } catch {}
-    if (manual && !reg.installing && !reg.waiting) toast(`Du hast die neueste Version (${APP_VERSION}).`, 3000);
-    return;
-  }
+  if (!NATIVE) return manual && toast('Updates gibt es nur in der Android-App.');
   if (manual) toast('Suche nach Updates …', 2000);
   try {
     let src = UPDATE_INFO; try { src = localStorage.getItem('notizbuch.updateUrl') || UPDATE_INFO; } catch {}   // nur zum Testen änderbar
