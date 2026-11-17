@@ -10,6 +10,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const FSA = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
+const NATIVE = !!window.NATIVE_APP;                      // läuft in der Android-App (native.js)
+const revive = h => (window.reviveHandle ? window.reviveHandle(h) : h);
 const A4 = [595.28, 841.89];
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 const COLORS = ['#1b1f24', '#1f4fd1', '#d0312d', '#1e8e4f', '#ef8a00', '#8a3fc2', '#ffd21f'];
@@ -907,7 +909,8 @@ async function doSave(pickNew) {
     }
     // Gegenprobe: ist die Datei jetzt wirklich so groß wie die erzeugte PDF?
     try {
-      const size = (await h.getFile()).size;
+      // In der Android-App meldet Android die geschriebenen Bytes; die Größe beim Speicherort kann nachhinken (Upload)
+      const size = h.native ? h.lastWritten : (await h.getFile()).size;
       if (size !== bytes.length) throw new Error(`Die Datei ist nur ${size} statt ${bytes.length} Bytes groß. Bitte nochmal speichern.`);
     } catch (err) { if (/Bytes groß/.test(err.message)) throw err; }
     created = null;
@@ -2158,7 +2161,7 @@ $('#bgDlg').addEventListener('close', () => {
 async function openNote(note) {
   Object.assign(S, { note, undo: [], redo: [], sel: null, editing: null, zoom: 1, fileDirty: !!note.unsaved, pdf: null, origBytes: null,
     snapshot: { pages: JSON.stringify(note.pages), unsaved: !!note.unsaved } });
-  S.handle = (await dbGet('handles', note.id))?.handle || null;
+  S.handle = revive((await dbGet('handles', note.id))?.handle) || null;
   const b = await dbGet('blobs', note.id);
   if (b) {
     S.origBytes = new Uint8Array(b.bytes);
@@ -2282,7 +2285,7 @@ async function importPdf(file, handle) {
   let existing = null;
   if (handle) {
     for (const row of await dbAll('handles')) {
-      try { if (await row.handle.isSameEntry(handle)) { existing = await dbGet('notes', row.id); break; } } catch {}
+      try { if (await revive(row.handle).isSameEntry(handle)) { existing = await dbGet('notes', row.id); break; } } catch {}
     }
   }
   // Ungespeicherte Änderungen aus der App nicht stillschweigend durch den Dateiinhalt ersetzen
@@ -2475,14 +2478,16 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 24;
-$('#appVersion').textContent = `Version ${APP_VERSION}`;
+const APP_VERSION = 25;
+$('#appVersion').textContent = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 let updateReady = false;
 function applyUpdate() {
   if (S.note || saving) { updateReady = true; return; }
   location.reload();
 }
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+// In der Android-App liegen alle Dateien in der App selbst; Updates kommen dort mit einer neuen App-Version
+if (NATIVE) $('#btnUpdate').hidden = true;
+else if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').then(reg => {
     // beim Zurückkehren in die App nach Updates schauen
@@ -2498,6 +2503,28 @@ $('#btnUpdate').addEventListener('click', async () => {
   try { await reg.update(); } catch {}
   if (!reg.installing && !reg.waiting) toast(`Du hast die neueste Version (${APP_VERSION}).`, 3000);
 });
+
+/* ---------------- Aufrufe aus der Android-App (MainActivity.java) ---------------- */
+// „Öffnen mit …“: eine PDF aus einer anderen App (z. B. Nextcloud)
+window.nativeOpenFile = async o => {
+  if (S.note) await closeEditor();
+  if (S.note) return;                                   // Schließen abgebrochen
+  const h = new window.NativeFileHandle(o);
+  try { await importPdf(await h.getFile(), o.writable ? h : null); }
+  catch (e) { return toast('Die Datei konnte nicht geöffnet werden: ' + e.message, 6000); }
+  if (!o.writable) toast('Diese App hat die Datei nur zum Lesen freigegeben. „Speichern“ fragt nach einem Speicherort.', 6000);
+};
+// S-Pen-Seitentaste, direkt von Android gemeldet (zusätzlich zur Erkennung im Browser; toggleEraser fängt doppelte Meldungen ab)
+window.nativePenButton = () => { if (S.note) toggleEraser(); };
+// Zurück-Taste: erst Menüs und Dialoge schließen, dann die Notiz; true = erledigt
+window.nativeBack = () => {
+  const dlg = document.querySelector('dialog[open]');
+  if (dlg) { dlg.close('cancel'); dlg.dispatchEvent(new Event('cancel')); return true; }
+  if ([...document.querySelectorAll('.popover')].some(p => !p.hidden)) { hidePops(); return true; }
+  if (S.sel) { setSel(null); return true; }
+  if (S.note) { closeEditor(); return true; }
+  return false;
+};
 
 /* Vorschaubilder der Papiervorlagen in den Auswahldialogen */
 function paperPreviews() {

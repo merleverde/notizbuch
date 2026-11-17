@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace = 'de.notizbuch.app'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'de.notizbuch.app'
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // Eigener Signaturschlüssel für die Tablet-Version. Schlüssel und Passwort liegen nur auf diesem PC
+    // (android/keystore.properties ist nicht im Repository). Ohne denselben Schlüssel lassen sich
+    // spätere Updates nicht über die installierte App installieren.
+    def ksFile = rootProject.file('keystore.properties')
+    if (ksFile.exists()) {
+        def ks = new Properties()
+        ksFile.withInputStream { ks.load(it) }
+        signingConfigs {
+            release {
+                storeFile = file(ks['storeFile'])
+                storePassword = ks['storePassword']
+                keyAlias = ks['keyAlias']
+                keyPassword = ks['keyPassword']
+            }
+        }
+        buildTypes.release.signingConfig = signingConfigs.release
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.15.0'
+    implementation 'androidx.activity:activity:1.10.1'
+}
+
+// Die Web-App liegt im Hauptordner des Repositorys. Vor jedem Bau wird sie in die App kopiert,
+// damit die Android-App immer denselben Stand wie die Webseite hat.
+def copyWeb = tasks.register('copyWeb', Copy) {
+    from(rootProject.file('..')) {
+        include 'index.html', 'native.js', 'app.js', 'style.css', 'manifest.webmanifest', 'icon.svg', 'icon-maskable.svg', 'vendor/**'
+    }
+    into 'src/main/assets/www'
+}
+tasks.named('preBuild') { dependsOn copyWeb }

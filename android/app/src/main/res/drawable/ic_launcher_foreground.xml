@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dasselbe Motiv wie icon.svg der Web-App: Notizblatt mit blauer Schreibspur, auf 108dp-Raster verkleinert -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <group
+        android:scaleX="0.62"
+        android:scaleY="0.62"
+        android:pivotX="256"
+        android:pivotY="256">
+        <path
+            android:fillColor="#F7F6F1"
+            android:pathData="M160,92h192a28,28 0 0 1 28,28v272a28,28 0 0 1 -28,28h-192a28,28 0 0 1 -28,-28v-272a28,28 0 0 1 28,-28z" />
+        <path
+            android:strokeColor="#C9D6E3"
+            android:strokeWidth="14"
+            android:strokeLineCap="round"
+            android:pathData="M178,178h156M178,238h156M178,298h96" />
+        <path
+            android:strokeColor="#1F4FD1"
+            android:strokeWidth="16"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M196,330c40,-70 70,-120 96,-92s-30,74 6,66 40,-46 70,-40" />
+    </group>
+</vector>

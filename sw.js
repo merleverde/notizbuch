@@ -1,7 +1,7 @@
 // Offline-Cache: sofort aus dem Speicher starten, im Hintergrund nach Updates schauen.
 // Ein Update ist beim nächsten Öffnen der App da.
-const CACHE = 'notizbuch-v24';
-const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-maskable.svg',
+const CACHE = 'notizbuch-v25';
+const ASSETS = ['./', 'index.html', 'style.css', 'native.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-maskable.svg',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js'];
 
 self.addEventListener('install', e => {
