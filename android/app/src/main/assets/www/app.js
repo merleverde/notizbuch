@@ -516,10 +516,10 @@ const io = new IntersectionObserver(entries => {
 function addPageEl(p, beforeEl = null) {
   const el = document.createElement('div');
   el.className = 'page'; el.dataset.id = p.id;
-  el.innerHTML = '<canvas class="bg"></canvas><canvas class="ink"></canvas><div class="text"></div><canvas class="live"></canvas><span class="pno"></span>';
-  const pe = { el, bg: el.children[0], ink: el.children[1], text: el.children[2], live: el.children[3], sc: null, visible: false, task: null };
+  el.innerHTML = '<canvas class="bg"></canvas><canvas class="ink"></canvas><canvas class="detail dbg"></canvas><canvas class="detail dink"></canvas><div class="text"></div><canvas class="live"></canvas><span class="pno"></span>';
+  const pe = { el, bg: el.children[0], ink: el.children[1], dbg: el.children[2], dink: el.children[3], text: el.children[4], live: el.children[5], sc: null, visible: false, task: null, det: null };
   // Bei knappem Grafikspeicher verwirft Chrome Zeichenflächen (sie werden schwarz/leer): danach neu zeichnen
-  for (const c of [pe.bg, pe.ink, pe.live]) {
+  for (const c of [pe.bg, pe.ink, pe.dbg, pe.dink, pe.live]) {
     c.addEventListener('contextlost', () => { pe.sc = null; });
     c.addEventListener('contextrestored', () => { pe.sc = null; scheduleRender(); });
   }
@@ -535,12 +535,83 @@ function buildPages() {
 function freePage(pe) {
   if (pe.task) { pe.task.cancel(); pe.task = null; }
   for (const c of [pe.bg, pe.ink, pe.live]) { c.width = 0; c.height = 0; }
+  hideDetail(pe);
   pe.sc = null;
 }
+
+/* ---------------- Detail-Ausschnitt beim Zoomen ----------------
+   Die ganze Seite wird höchstens in ~6 Mio. Pixeln gezeichnet (Grafikspeicher). Ab etwa 100 % Zoom auf dem
+   Tablet reicht das nicht mehr für volle Schärfe. Dann wird zusätzlich nur der sichtbare Ausschnitt (plus Rand)
+   in Bildschirmauflösung gezeichnet und über die Seite gelegt: PDF/Papier in dbg, Schrift in dink. */
+function hideDetail(pe) {
+  if (pe.dtask) { pe.dtask.cancel(); pe.dtask = null; }
+  for (const c of [pe.dbg, pe.dink]) { c.width = 0; c.height = 0; c.style.display = 'none'; }
+  pe.det = null;
+}
+const needsDetail = p => scale() * dpr() > ratio(p) * 1.1;
+async function renderDetail(pe, p) {
+  if (!pe.visible || !needsDetail(p)) return hideDetail(pe);
+  const sc = scale(), d = dpr();
+  const pr = pe.el.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+  // sichtbarer Teil der Seite in CSS-Pixeln, mit etwas Rand zum Scrollen
+  const mx = wr.width * 0.25, my = wr.height * 0.25;
+  const vx0 = Math.max(0, wr.left - pr.left - mx), vy0 = Math.max(0, wr.top - pr.top - my);
+  const vx1 = Math.min(pr.width, wr.right - pr.left + mx), vy1 = Math.min(pr.height, wr.bottom - pr.top + my);
+  if (vx1 <= vx0 || vy1 <= vy0) return hideDetail(pe);
+  const W = Math.round((vx1 - vx0) * d), H = Math.round((vy1 - vy0) * d);
+  if (W * H > 12e6) return hideDetail(pe);
+  const r = sc * d, x0 = vx0 / sc, y0 = vy0 / sc;
+  if (pe.dtask) { pe.dtask.cancel(); pe.dtask = null; }
+  const det = { x0, y0, r, sc };
+  // Hintergrund erst in einen Zwischenpuffer, damit beim Neuzeichnen nichts aufblitzt
+  const off = document.createElement('canvas'); off.width = W; off.height = H;
+  const octx = off.getContext('2d');
+  if (p.pdf != null && S.pdf) {
+    octx.fillStyle = '#fff'; octx.fillRect(0, 0, W, H);
+    const page = await S.pdf.getPage(p.pdf + 1);
+    const task = page.render({ canvasContext: octx, viewport: page.getViewport({ scale: r, offsetX: -x0 * r, offsetY: -y0 * r }) });
+    pe.dtask = task;
+    try { await task.promise; } catch { return; }
+    if (pe.dtask !== task) return;
+    pe.dtask = null;
+  } else {
+    octx.setTransform(r, 0, 0, r, -x0 * r, -y0 * r); drawPaper(octx, p);
+  }
+  if (!pe.visible || scale() !== sc) return;                 // inzwischen gezoomt: der nächste Durchgang zeichnet neu
+  for (const c of [pe.dbg, pe.dink]) {
+    c.width = W; c.height = H;
+    Object.assign(c.style, { display: 'block', left: vx0 + 'px', top: vy0 + 'px', width: (vx1 - vx0) + 'px', height: (vy1 - vy0) + 'px', right: 'auto', bottom: 'auto' });
+  }
+  pe.dbg.getContext('2d').drawImage(off, 0, 0);
+  pe.det = det;
+  renderDetailInk(pe, p);
+}
+function detailCtx(pe) {
+  const { x0, y0, r } = pe.det, ctx = pe.dink.getContext('2d');
+  ctx.setTransform(r, 0, 0, r, -x0 * r, -y0 * r);
+  return ctx;
+}
+function renderDetailInk(pe, p) {
+  if (!pe.det) return;
+  const ctx = pe.dink.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, pe.dink.width, pe.dink.height);
+  drawItems(detailCtx(pe), p.items, () => renderDetailInk(pe, p));
+}
+let detailT = 0;
+function scheduleDetail() {
+  clearTimeout(detailT);
+  detailT = setTimeout(() => {
+    if (!S.note || act) return;
+    for (const p of S.note.pages) { const pe = pageEls.get(p.id); if (pe && pe.visible) renderDetail(pe, p); }
+  }, 160);
+}
+wrap.addEventListener('scroll', () => { if (S.note && S.note.pages.some(needsDetail)) scheduleDetail(); }, { passive: true });
+
 function layout() {
   const sc = scale();
   S.note.pages.forEach((p, i) => {
     const pe = pageEls.get(p.id);
+    if (pe.det && pe.det.sc !== sc) hideDetail(pe);          // Zoom geändert: alter Ausschnitt passt nicht mehr
     pe.el.style.width = p.w * sc + 'px'; pe.el.style.height = p.h * sc + 'px';
     pe.el.lastChild.textContent = `${i + 1} / ${S.note.pages.length}`;
     pe.el.classList.toggle('marked', !!p.mark);
@@ -557,6 +628,7 @@ function renderVisible() {
     const pe = pageEls.get(p.id);
     if (pe && pe.visible && pe.sc !== sc) { pe.sc = sc; renderBg(pe, p); renderInk(pe, p); }
   }
+  scheduleDetail();
 }
 async function renderBg(pe, p) {
   const r = ratio(p);
@@ -589,6 +661,7 @@ function renderInk(pe, p) {
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, pe.ink.width, pe.ink.height);
   ctx.setTransform(r, 0, 0, r, 0, 0);
   drawItems(ctx, p.items, () => renderInk(pe, p));
+  renderDetailInk(pe, p);
 }
 /* Höchstens einmal pro Bildschirmbild neu zeichnen (Radieren, Verschieben, Drehen) */
 function renderInkSoon(pe, p) {
@@ -602,6 +675,7 @@ function drawAdded(pe, p, items) {
   if (pe.inkRaf || pe.ink.width !== Math.round(p.w * r) || pe.ink.height !== Math.round(p.h * r)) return renderInk(pe, p);
   const ctx = pe.ink.getContext('2d'); ctx.setTransform(r, 0, 0, r, 0, 0);
   drawItems(ctx, items, () => renderInk(pe, p));
+  if (pe.det) drawItems(detailCtx(pe), items, () => renderDetailInk(pe, p));
 }
 function renderText(pe, p) {
   const sc = scale();
@@ -2545,7 +2619,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
