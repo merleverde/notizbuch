@@ -1071,8 +1071,9 @@ function tapAt(cx, cy) {
   else if (prefs.tool === 'text' && p) { const [x, y] = toPage(p, cx, cy); textTap(p, x, y); }
 }
 
-/* Live-Ebene im schnellen Modus von Chrome: der Strich erscheint ohne Umweg über den normalen Bildaufbau */
-const liveCtx = pe => pe.lctx ||= pe.live.getContext('2d', { desynchronized: true }) || pe.live.getContext('2d');
+/* Live-Ebene. Hinweis: den „desynchronized“-Modus von Chrome nicht verwenden. Auf Samsung-Tablets
+   wird die durchsichtige Ebene damit beim Zoomen schwarz. */
+const liveCtx = pe => pe.lctx ||= pe.live.getContext('2d');
 function prepLive(pe, p) {
   const r = ratio(p), ctx = liveCtx(pe);
   if (!sizeCanvas(pe.live, p, r)) ctx.clearRect(0, 0, pe.live.width, pe.live.height);
