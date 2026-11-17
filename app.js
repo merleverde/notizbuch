@@ -113,26 +113,65 @@ function shade(hex, i) {
   return c;
 }
 /* Bleistift-Körnung: Farbe mit zufällig durchlässigen Pixeln (fester Zufall → immer gleiches Muster) */
-const grainCanvases = new Map(), grainPatterns = new WeakMap();
-function grainPattern(ctx, color) {
-  let g = grainCanvases.get(color);
-  if (!g) {
-    g = document.createElement('canvas'); g.width = g.height = 32;
-    const gx = g.getContext('2d'); gx.fillStyle = color; gx.fillRect(0, 0, 32, 32);
-    const d = gx.getImageData(0, 0, 32, 32); let seed = 7;
-    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    for (let j = 3; j < d.data.length; j += 4) d.data[j] = rnd() < 0.2 ? 0 : 120 + rnd() * 135;
-    gx.putImageData(d, 0, 0); grainCanvases.set(color, g);
-  }
-  let m = grainPatterns.get(ctx);
-  if (!m) { m = new Map(); grainPatterns.set(ctx, m); }
-  let pat = m.get(color);
-  if (!pat) { pat = ctx.createPattern(g, 'repeat'); m.set(color, pat); }
-  return pat;
-}
 function penPaint(ctx, it, st, pr) {
-  const c = shade(it.color, st.i(pr));
-  return st.grain ? grainPattern(ctx, c) : c;
+  return shade(it.color, st.i(pr));
+}
+
+/* Bleistift: Der Strich wird erst deckend in einen Zwischenpuffer gemalt (so entstehen an den Überlappungen
+   der Teilstücke keine dunklen Perlen) und dann mit einer feinen Papierstruktur ausgestanzt.
+   Die Struktur hängt am Bildschirm-Pixelraster, damit die Körnung bei jedem Zoom gleich fein bleibt. */
+let toothCanvas = null;
+function paperTooth() {
+  if (toothCanvas) return toothCanvas;
+  const N = 96, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), d = g.createImageData(N, N);
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const v = new Float32Array(N * N).map(rnd);
+  const at = (x, y) => v[((y + N) % N) * N + ((x + N) % N)];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    // leicht verwischt und schräg betont: wirkt wie Papierfasern statt wie Rauschen
+    const s = (2 * at(x, y) + at(x + 1, y) + at(x - 1, y) + at(x, y + 1) + at(x, y - 1) + 1.5 * at(x + 1, y + 1) + 1.5 * at(x - 1, y - 1)) / 9;
+    d.data[(y * N + x) * 4 + 3] = Math.round(255 * (0.58 + 0.42 * clamp((s - 0.32) / 0.4, 0, 1)));
+  }
+  g.putImageData(d, 0, 0);
+  return toothCanvas = c;
+}
+const pencilBuf = document.createElement('canvas');
+function drawPencil(ctx, it) {
+  const st = penStyle(it), pts = it.pts, n = pts.length, m = ctx.getTransform(), sc = Math.hypot(m.a, m.b) || 1;
+  const b = bbox(it);
+  const x0 = Math.floor(b.x * sc + m.e), y0 = Math.floor(b.y * sc + m.f);
+  const W = Math.ceil(b.w * sc) + 3, H = Math.ceil(b.h * sc) + 3;
+  if (W < 1 || H < 1 || W * H > 2.5e7) return;
+  if (pencilBuf.width < W) pencilBuf.width = W;
+  if (pencilBuf.height < H) pencilBuf.height = H;
+  const g = pencilBuf.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, W, H);
+  g.setTransform(sc, 0, 0, sc, m.e - x0, m.f - y0);
+  g.lineCap = g.lineJoin = 'round';
+  if (n < 3) {
+    for (const [x, y, pr] of pts) { g.fillStyle = shade(it.color, st.i(pr)); g.beginPath(); g.arc(x, y, st.w(it.size, pr, 0) / 2, 0, 7); g.fill(); }
+    if (n === 2) { g.strokeStyle = shade(it.color, st.i(pts[1][2])); g.lineWidth = st.w(it.size, pts[1][2], 0); g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); g.lineTo(pts[1][0], pts[1][1]); g.stroke(); }
+  } else {
+    let sx = pts[0][0], sy = pts[0][1];
+    for (let i = 1; i < n - 1; i++) {
+      const ex = i === n - 2 ? pts[n - 1][0] : (pts[i][0] + pts[i + 1][0]) / 2;
+      const ey = i === n - 2 ? pts[n - 1][1] : (pts[i][1] + pts[i + 1][1]) / 2;
+      g.lineWidth = st.w(it.size, pts[i][2], 0);
+      g.strokeStyle = shade(it.color, st.i(pts[i][2]));
+      g.beginPath(); g.moveTo(sx, sy); g.quadraticCurveTo(pts[i][0], pts[i][1], ex, ey); g.stroke();
+      sx = ex; sy = ey;
+    }
+  }
+  // Papierstruktur ausstanzen, verankert am Bildschirm-Raster
+  const pat = g.createPattern(paperTooth(), 'repeat');
+  pat.setTransform(new DOMMatrix([1, 0, 0, 1, -x0, -y0]));
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'destination-in';
+  g.fillStyle = pat; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha *= 0.92;
+  ctx.drawImage(pencilBuf, 0, 0, W, H, x0, y0, W, H);
+  ctx.restore();
 }
 
 /* Papiervorlagen. Auf dunklem Papier werden die Hilfslinien hell gezeichnet. */
@@ -197,6 +236,7 @@ function drawPaper(ctx, p) {
 function drawStroke(ctx, it) {
   const pts = it.pts, n = pts.length;
   if (!n) return;
+  if (it.tool === 'pen' && penStyle(it).grain && ctx.getTransform) return drawPencil(ctx, it);
   ctx.save();
   ctx.strokeStyle = ctx.fillStyle = it.color;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -1203,7 +1243,15 @@ function addPts(e) {
     const last = it.pts[it.pts.length - 1];
     if (last && Math.hypot(x - last[0], y - last[1]) < 0.7 / k) continue;
     it.pts.push([+x.toFixed(2), +y.toFixed(2), +pr.toFixed(2)]);
-    if (it.tool === 'pen') {
+    if (it.tool === 'pen' && penStyle(it).grain) {
+      // Bleistift: einmal pro Bildschirmbild den ganzen Strich neu zeichnen (wie er am Ende aussieht)
+      const a = act;
+      if (!a.pencilRaf) a.pencilRaf = requestAnimationFrame(() => {
+        a.pencilRaf = 0;
+        if (a.recog || act !== a) return;            // Strich schon fertig oder in eine Form umgewandelt
+        a.ctx.clearRect(0, 0, a.p.w, a.p.h); drawPencil(a.ctx, a.item);
+      });
+    } else if (it.tool === 'pen') {
       const st = penStyle(it), a = last ? Math.atan2(y - last[1], x - last[0]) : 0;
       ctx.strokeStyle = ctx.fillStyle = penPaint(ctx, it, st, pr); ctx.lineCap = 'round';
       if (last) { ctx.lineWidth = st.w(it.size, pr, a); ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(x, y); ctx.stroke(); }
@@ -1325,10 +1373,29 @@ function scribbleErase(a) {
   if (Math.max(zigzag(0), zigzag(1)) < 5) return false;
   const p = a.p, pad = 2;
   const inside = (x, y) => x >= b.x - pad && x <= b.x + b.w + pad && y >= b.y - pad && y <= b.y + b.h + pad;
+  // Kreuzt das Kritzeln ein Element mehrfach, ist es gemeint – auch wenn es weit über den Kritzelbereich hinausreicht
+  // (z. B. eine lange gerade Linie, über deren Mitte gekritzelt wird)
+  const cross = (a1, a2, b1, b2) => {
+    const d = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    return d(a1, a2, b1) * d(a1, a2, b2) <= 0 && d(b1, b2, a1) * d(b1, b2, a2) <= 0;     // Berühren zählt mit
+  };
+  const crossings = line => {
+    let k = 0;
+    for (let i = 1; i < line.length; i++) for (let j = 1; j < n; j++) if (cross(line[i - 1], line[i], P[j - 1], P[j]) && ++k >= 3) return k;
+    return k;
+  };
   const hit = it => {
-    if (it.t === 'stroke') { const k = it.pts.filter(q => inside(q[0], q[1])).length; return k >= Math.max(1, it.pts.length * 0.4); }
-    if (it.t === 'shape') { const s = bbox(it); return inside(s.x + s.w / 2, s.y + s.h / 2) && s.w <= b.w * 1.3 && s.h <= b.h * 1.3; }
-    return false;
+    if (it.t !== 'stroke' && it.t !== 'shape') return false;
+    if (!overlaps(bbox(it), b)) return false;
+    if (it.t === 'stroke') {
+      const k = it.pts.filter(q => inside(q[0], q[1])).length;
+      if (k >= Math.max(1, it.pts.length * 0.4)) return true;
+      if (it.pts.length === 1) return false;
+    } else {
+      const s = bbox(it);
+      if (inside(s.x + s.w / 2, s.y + s.h / 2) && s.w <= b.w * 1.3 && s.h <= b.h * 1.3) return true;
+    }
+    return crossings(it.t === 'stroke' ? it.pts : shapeOutline(it)) >= 3;
   };
   const keep = p.items.filter(it => !hit(it));
   if (keep.length === p.items.length) return false;
@@ -2478,7 +2545,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
