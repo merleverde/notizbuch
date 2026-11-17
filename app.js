@@ -201,6 +201,7 @@ function drawStroke(ctx, it) {
   if (it.tool === 'marker' || it.tool === 'cover') {
     // Textmarker halbtransparent; Abdecken = deckend in Papierweiß
     ctx.globalAlpha = it.tool === 'marker' ? 0.38 : 1; ctx.lineWidth = it.size;
+    if (it.cap) ctx.lineCap = it.cap;                  // an Text eingerastete Markierungen enden gerade
     ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
     if (n === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
     for (let i = 1; i < n - 1; i++) {
@@ -1037,6 +1038,10 @@ function startAct(tool, p, e, extra = {}) {
   } else if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
     if (tool === 'pen') act.item.style = prefs.penStyle;
+    // Textmarker auf PDF-Seiten: Textzeilen laden, damit der Strich an ihnen einrasten kann
+    if (tool === 'marker' && prefs.snapText !== false && p.pdf != null && S.pdf) {
+      const a = act; pdfLines(p).then(l => { a.lines = l; }).catch(() => {});
+    }
     addPts(e);
     // Lineal: der Strich wird von Anfang an als Gerade gezogen
     if (prefs.ruler) act.recog = { kind: 'markerLine', x1: x, y1: y, x2: x, y2: y };
@@ -1130,7 +1135,11 @@ function addPts(e) {
       else { ctx.beginPath(); ctx.arc(x, y, st.w(it.size, pr, a) / 2, 0, 7); ctx.fill(); }
     }
   }
-  if (it.tool === 'marker') { ctx.clearRect(0, 0, act.p.w, act.p.h); drawStroke(ctx, it); }
+  if (it.tool === 'marker') {
+    ctx.clearRect(0, 0, act.p.w, act.p.h);
+    const snap = snapRects(act);
+    if (snap) snap.forEach(s => drawStroke(ctx, s)); else drawStroke(ctx, it);
+  }
   const last = it.pts[it.pts.length - 1];
   if (it.tool === 'cover') {
     ctx.clearRect(0, 0, act.p.w, act.p.h); drawStroke(ctx, it);
@@ -1139,6 +1148,82 @@ function addPts(e) {
   }
   if (last) holdCheck(last[0], last[1]);
 }
+/* ---------------- Textmarker an PDF-Text einrasten ----------------
+   Die Textzeilen einer PDF-Seite kommen aus pdf.js (getTextContent). Ein Markerstrich, der auf Text beginnt,
+   wird wie eine Textauswahl behandelt: vom Startzeichen bis zum Endzeichen, über mehrere Zeilen hinweg. */
+function pdfLines(p) {
+  const cache = S.pdf._lines ||= new Map();
+  if (!cache.has(p.pdf)) cache.set(p.pdf, loadPdfLines(S.pdf, p.pdf));
+  return cache.get(p.pdf);
+}
+async function loadPdfLines(doc, idx) {
+  const page = await doc.getPage(idx + 1), vp = page.getViewport({ scale: 1 }), tc = await page.getTextContent();
+  const boxes = [];
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim() || !it.width) continue;
+    const m = pdfjsLib.Util.transform(vp.transform, it.transform);
+    if (Math.abs(m[1]) > 0.01 * Math.abs(m[0]) || Math.abs(m[2]) > 0.01 * Math.abs(m[3])) continue;   // nur waagerechter Text
+    const h = Math.abs(m[3]); if (h < 2) continue;
+    const xa = m[4], xb = m[4] + Math.sign(m[0]) * it.width, up = m[3] < 0;
+    boxes.push({ left: Math.min(xa, xb), right: Math.max(xa, xb), top: m[5] - (up ? 0.82 : 0.22) * h, bottom: m[5] + (up ? 0.22 : 0.82) * h, h, n: it.str.length });
+  }
+  // zu Zeilen zusammenfassen: gleiche Höhe und nicht zu weit auseinander (zweispaltige Seiten bleiben getrennt)
+  boxes.sort((a, b) => (a.top + a.bottom) - (b.top + b.bottom) || a.left - b.left);
+  const lines = [];
+  for (const b of boxes) {
+    const l = lines.find(l => {
+      const ov = Math.min(l.bottom, b.bottom) - Math.max(l.top, b.top);
+      return ov > 0.5 * Math.min(l.bottom - l.top, b.bottom - b.top) && b.left - l.right < 3 * b.h && l.left - b.right < 3 * b.h;
+    });
+    if (l) { l.boxes.push(b); l.left = Math.min(l.left, b.left); l.right = Math.max(l.right, b.right); l.top = Math.min(l.top, b.top); l.bottom = Math.max(l.bottom, b.bottom); }
+    else lines.push({ left: b.left, right: b.right, top: b.top, bottom: b.bottom, boxes: [b] });
+  }
+  lines.forEach(l => l.boxes.sort((a, b) => a.left - b.left));
+  return lines.sort((a, b) => a.top - b.top || a.left - b.left);
+}
+function lineAt(lines, x, y) {
+  let best = null, bd = Infinity;
+  for (const l of lines) {
+    const hh = l.bottom - l.top;
+    if (x < l.left - hh || x > l.right + hh) continue;
+    const d = y < l.top ? l.top - y : y > l.bottom ? y - l.bottom : 0;
+    if (d < bd && d <= hh * 0.6) { bd = d; best = l; }
+  }
+  return best;
+}
+/* x auf eine Zeichengrenze der Zeile setzen; Zeichenbreite wird je Textstück gleichmäßig angenommen */
+function snapX(l, x, end) {
+  if (x <= l.left) return l.left;
+  if (x >= l.right) return l.right;
+  for (let i = 0; i < l.boxes.length; i++) {
+    const b = l.boxes[i];
+    if (x < b.left) return end ? l.boxes[i - 1].right : b.left;      // in einer Lücke zwischen Wörtern
+    if (x <= b.right) {
+      const cw = (b.right - b.left) / b.n, k = (x - b.left) / cw;
+      return b.left + (end ? Math.ceil(k) : Math.floor(k)) * cw;
+    }
+  }
+  return l.right;
+}
+function snapRects(a) {
+  if (!a.lines || !a.item || a.item.pts.length < 2) return null;
+  const P = a.item.pts, s = P[0], e = P[P.length - 1];
+  let la = lineAt(a.lines, s[0], s[1]), lb = lineAt(a.lines, e[0], e[1]);
+  if (!la || !lb) return null;
+  let ia = a.lines.indexOf(la), ib = a.lines.indexOf(lb), xs = s[0], xe = e[0];
+  if (ia > ib || (ia === ib && xs > xe)) { [ia, ib] = [ib, ia]; [la, lb] = [lb, la]; [xs, xe] = [xe, xs]; }
+  const spanL = Math.min(la.left, lb.left), spanR = Math.max(la.right, lb.right), out = [];
+  for (let i = ia; i <= ib; i++) {
+    const l = a.lines[i];
+    if (i !== ia && i !== ib && (l.right < spanL || l.left > spanR)) continue;   // Zeilen aus der Nachbarspalte überspringen
+    const x0 = i === ia ? snapX(l, xs, false) : l.left, x1 = i === ib ? snapX(l, xe, true) : l.right;
+    if (x1 - x0 < 1) continue;
+    const yc = +((l.top + l.bottom) / 2).toFixed(2);
+    out.push({ ...a.item, id: uid(), cap: 'butt', size: +(l.bottom - l.top).toFixed(2), pts: [[+x0.toFixed(2), yc, .5], [+x1.toFixed(2), yc, .5]] });
+  }
+  return out.length ? out : null;
+}
+
 /* Kritzeln zum Löschen: schnelles Hin-und-her über Geschriebenem löscht, was darunter liegt.
    Erkannt wird ein Zickzack mit mindestens vier langen Richtungswechseln; liegt nichts darunter, bleibt der Strich. */
 function scribbleErase(a) {
@@ -1292,7 +1377,11 @@ function endAct(e) {
   const a = act; act = null;
   const { p, pe, tool } = a;
   clearTimeout(a.hold?.t);
-  if ((tool === 'pen' || tool === 'marker') && a.recog) {
+  const snapped = tool === 'marker' && snapRects(a);
+  if (snapped) {
+    p.items.push(...snapped);
+    renderInk(pe, p); clearLive(pe); commit(p, a.before);
+  } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
     const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
     if (!tiny) p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
@@ -1571,6 +1660,8 @@ function updToolbar() {
   $('#shapeKinds').hidden = t !== 'shape';
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
+  $('#btnSnap').hidden = t !== 'marker';
+  $('#btnSnap').classList.toggle('active', prefs.snapText !== false);
   $('#btnFill').textContent = 'Füllung: ' + ['aus', 'hell', 'voll'][prefs.fill || 0];
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
@@ -1613,6 +1704,7 @@ $('#toolbar').addEventListener('click', e => {
   }
   else if (b.dataset.tool) setTool(b.dataset.tool);
   else if (b.dataset.color) setColor(b.dataset.color);
+  else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }

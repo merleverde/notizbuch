@@ -1,6 +1,6 @@
 // Offline-Cache: sofort aus dem Speicher starten, im Hintergrund nach Updates schauen.
 // Ein Update ist beim nächsten Öffnen der App da.
-const CACHE = 'notizbuch-v18';
+const CACHE = 'notizbuch-v19';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-maskable.svg',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js'];
 
