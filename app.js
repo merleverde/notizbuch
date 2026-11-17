@@ -535,12 +535,26 @@ async function renderBg(pe, p) {
 }
 function renderInk(pe, p) {
   if (!pe.visible) return;
+  if (pe.inkRaf) { cancelAnimationFrame(pe.inkRaf); pe.inkRaf = 0; }
   const r = ratio(p);
   sizeCanvas(pe.ink, p, r);
   const ctx = pe.ink.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, pe.ink.width, pe.ink.height);
   ctx.setTransform(r, 0, 0, r, 0, 0);
   drawItems(ctx, p.items, () => renderInk(pe, p));
+}
+/* Höchstens einmal pro Bildschirmbild neu zeichnen (Radieren, Verschieben, Drehen) */
+function renderInkSoon(pe, p) {
+  if (!pe.visible || pe.inkRaf) return;
+  pe.inkRaf = requestAnimationFrame(() => { pe.inkRaf = 0; renderInk(pe, p); });
+}
+/* Neue Elemente liegen ganz oben: nur sie dazuzeichnen statt die ganze Seite neu */
+function drawAdded(pe, p, items) {
+  if (!pe.visible) return;
+  const r = ratio(p);
+  if (pe.inkRaf || pe.ink.width !== Math.round(p.w * r) || pe.ink.height !== Math.round(p.h * r)) return renderInk(pe, p);
+  const ctx = pe.ink.getContext('2d'); ctx.setTransform(r, 0, 0, r, 0, 0);
+  drawItems(ctx, items, () => renderInk(pe, p));
 }
 function renderText(pe, p) {
   const sc = scale();
@@ -585,9 +599,13 @@ function setZoom(z, cx, cy) {
 }
 
 /* ---------------- Verlauf & Speichern ---------------- */
+/* Verlauf: gespeichert werden flache Kopien der Elementliste (keine Textkopien aller Striche).
+   Dafür werden Elemente nie an Ort und Stelle verändert, sondern bei Änderungen ersetzt. */
+const snap = p => p.items.slice();
 function commit(p, before) {
-  const after = JSON.stringify(p.items);
-  if (after === before) return;
+  if (typeof before === 'string') before = JSON.parse(before);
+  if (before.length === p.items.length && before.every((x, i) => x === p.items[i])) return;
+  const after = snap(p);
   S.undo.push({ pid: p.id, before, after });
   if (S.undo.length > 60) S.undo.shift();
   S.redo.length = 0;
@@ -604,7 +622,7 @@ function applyHist(from, to, key) {
     to.push(h); updUndo(); return;
   }
   const p = pageById(h.pid);
-  if (p) { p.items = JSON.parse(h[key]); setSel(null); refreshPage(p); markDirty(); queueThumb(p.id); }
+  if (p) { p.items = h[key].slice(); setSel(null); refreshPage(p); markDirty(); queueThumb(p.id); }
   to.push(h); updUndo();
 }
 const undo = () => applyHist(S.undo, S.redo, 'before');
@@ -613,11 +631,13 @@ function updUndo() { $('#btnUndo').disabled = !S.undo.length; $('#btnRedo').disa
 
 function markDirty() {
   S.fileDirty = true; S.note.unsaved = true; updState();
-  clearTimeout(S.saveT); S.saveT = setTimeout(saveLocal, 700);
+  clearTimeout(S.saveT); S.saveT = setTimeout(saveLocal, 1500);
 }
 async function saveLocal() {
   clearTimeout(S.saveT);
   if (!S.note) return;
+  // nicht mitten im Strich speichern: kurz warten, bis der Stift abgehoben ist
+  if (act && !document.hidden) { S.saveT = setTimeout(saveLocal, 800); return; }
   S.note.updated = Date.now();
   try { await dbPut('notes', S.note); } catch (e) { toast('Lokales Speichern fehlgeschlagen: ' + e.message); }
 }
@@ -977,7 +997,7 @@ function btnEraseMove(e) {
   if (p && p !== act.p) {
     finishBtnPage();
     const pe = pageEls.get(p.id), rect = pe.el.getBoundingClientRect();
-    Object.assign(act, { p, pe, rect, k: rect.width / p.w, before: JSON.stringify(p.items), changed: false, ctx: prepLive(pe, p), ex: undefined, ey: undefined });
+    Object.assign(act, { p, pe, rect, k: rect.width / p.w, before: snap(p), changed: false, ctx: prepLive(pe, p), ex: undefined, ey: undefined });
   }
   if (!act.p) return;
   const [x, y] = toPageA(e.clientX, e.clientY);
@@ -1051,17 +1071,19 @@ function tapAt(cx, cy) {
   else if (prefs.tool === 'text' && p) { const [x, y] = toPage(p, cx, cy); textTap(p, x, y); }
 }
 
+/* Live-Ebene im schnellen Modus von Chrome: der Strich erscheint ohne Umweg über den normalen Bildaufbau */
+const liveCtx = pe => pe.lctx ||= pe.live.getContext('2d', { desynchronized: true }) || pe.live.getContext('2d');
 function prepLive(pe, p) {
-  const r = ratio(p);
-  if (!sizeCanvas(pe.live, p, r)) pe.live.getContext('2d').clearRect(0, 0, pe.live.width, pe.live.height);
-  const ctx = pe.live.getContext('2d'); ctx.setTransform(r, 0, 0, r, 0, 0);
+  const r = ratio(p), ctx = liveCtx(pe);
+  if (!sizeCanvas(pe.live, p, r)) ctx.clearRect(0, 0, pe.live.width, pe.live.height);
+  ctx.setTransform(r, 0, 0, r, 0, 0);
   return ctx;
 }
-function clearLive(pe) { const c = pe.live; c.getContext('2d').setTransform(1, 0, 0, 1, 0, 0); c.getContext('2d').clearRect(0, 0, c.width, c.height); }
+function clearLive(pe) { const c = pe.live, ctx = liveCtx(pe); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, c.width, c.height); }
 
 function startAct(tool, p, e, extra = {}) {
   const pe = pageEls.get(p.id), rect = pe.el.getBoundingClientRect();
-  act = { tool, p, pe, pid: e.pointerId, rect, k: rect.width / p.w, before: JSON.stringify(p.items), ...extra };
+  act = { tool, p, pe, pid: e.pointerId, rect, k: rect.width / p.w, before: snap(p), ...extra };
   const [x, y] = toPageA(e.clientX, e.clientY);
   Object.assign(act, { x0: x, y0: y, x, y });
   if (tool !== 'move' && tool !== 'scale' && tool !== 'text') act.ctx = prepLive(pe, p);
@@ -1345,7 +1367,7 @@ function eraseAt(x, y) {
     }
     p.items = out;
   }
-  if (changed) { act.changed = true; renderInk(act.pe, p); }
+  if (changed) { act.changed = true; renderInkSoon(act.pe, p); }
 }
 function moveAct(e) {
   if (act.tool === 'btnErase') return btnEraseMove(e);
@@ -1414,17 +1436,18 @@ function endAct(e) {
   const snapped = tool === 'marker' && snapRects(a);
   if (snapped) {
     p.items.push(...snapped);
-    renderInk(pe, p); clearLive(pe); commit(p, a.before);
+    drawAdded(pe, p, snapped); clearLive(pe); commit(p, a.before);
   } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
     const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
-    if (!tiny) p.items.push(r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r);
-    renderInk(pe, p); clearLive(pe); commit(p, a.before);
+    const it = tiny ? null : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
+    if (it) { p.items.push(it); drawAdded(pe, p, [it]); }
+    clearLive(pe); commit(p, a.before);
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
     smoothStroke(a);
-    if (tool === 'pen' && scribbleErase(a)) { /* Kritzeln hat gelöscht, der Kritzelstrich entfällt */ }
-    else if (a.item.pts.length) p.items.push(a.item);
-    renderInk(pe, p); clearLive(pe); commit(p, a.before);
+    if (tool === 'pen' && scribbleErase(a)) renderInk(pe, p);      // Kritzeln hat gelöscht: Seite neu zeichnen
+    else if (a.item.pts.length) { p.items.push(a.item); drawAdded(pe, p, [a.item]); }
+    clearLive(pe); commit(p, a.before);
   } else if (tool === 'eraser') {
     clearLive(pe); if (a.changed) commit(p, a.before);
   } else if (tool === 'lasso') {
@@ -1480,7 +1503,7 @@ function pasteClip(p = currentPage(), x, y) {
   }
   const b = unionBox(clip.map(bbox));
   const dx = clamp(x - b.w / 2, 4, Math.max(4, p.w - b.w - 4)) - b.x, dy = clamp(y - b.h / 2, 4, Math.max(4, p.h - b.h - 4)) - b.y;
-  const before = JSON.stringify(p.items);
+  const before = snap(p);
   const items = clip.map(i => ({ ...xform(i, (a, c) => [a + dx, c + dy], 1), id: uid() }));
   p.items.push(...items);
   setTool('lasso'); refreshPage(p); commit(p, before);
@@ -1534,11 +1557,13 @@ function renderSel() {
 function applySel(fn, k, da = 0) {
   const { p } = act;
   p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k, da) : it);
-  renderInk(act.pe, p); renderText(act.pe, p); renderSel();
+  // Anzeige pro Bildschirmbild nur einmal auffrischen
+  const pe = act.pe;
+  if (!pe.selRaf) pe.selRaf = requestAnimationFrame(() => { pe.selRaf = 0; renderInk(pe, p); renderText(pe, p); renderSel(); });
 }
 function selAction(a) {
   if (!S.sel) return;
-  const { p, ids } = S.sel, before = JSON.stringify(p.items);
+  const { p, ids } = S.sel, before = snap(p);
   if (a === 'copy' || a === 'cut') {
     setClip(p.items.filter(i => ids.has(i.id)));
     toast(a === 'copy' ? 'Kopiert. Mit dem Lasso auf eine freie Stelle tippen zum Einfügen.' : 'Ausgeschnitten. Mit dem Lasso auf eine freie Stelle tippen zum Einfügen.', 3500);
@@ -1559,7 +1584,7 @@ function selAction(a) {
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 function moveLayer(dir) {
   if (!S.sel) return;
-  const { p, ids } = S.sel, before = JSON.stringify(p.items);
+  const { p, ids } = S.sel, before = snap(p);
   const sel = p.items.filter(i => ids.has(i.id)), rest = p.items.filter(i => !ids.has(i.id));
   const box = unionBox(sel.map(bbox));
   const first = p.items.findIndex(i => ids.has(i.id)), last = p.items.length - 1 - [...p.items].reverse().findIndex(i => ids.has(i.id));
@@ -1578,7 +1603,7 @@ function moveLayer(dir) {
   }
   rest.splice(at, 0, ...sel);
   p.items = rest;
-  if (JSON.stringify(p.items) === before) return toast(dir === 'top' || dir === 'up' ? 'Liegt schon ganz vorne.' : 'Liegt schon ganz hinten.', 1800);
+  if (p.items.every((x, i) => x === before[i])) return toast(dir === 'top' || dir === 'up' ? 'Liegt schon ganz vorne.' : 'Liegt schon ganz hinten.', 1800);
   refreshPage(p); renderSel(); commit(p, before);
 }
 $('#layerPop').addEventListener('click', e => {
@@ -1611,8 +1636,9 @@ function openStylePop(anchor) {
 function applyStyle(fn, done) {
   if (!S.sel) return;
   const { p } = S.sel;
-  styleBefore ??= JSON.stringify(p.items);
-  selItems().forEach(fn);
+  styleBefore ??= snap(p);
+  // ausgewählte Elemente durch geänderte Kopien ersetzen (der Verlauf behält die Originale)
+  p.items = p.items.map(it => { if (!S.sel.ids.has(it.id)) return it; const c = { ...it }; fn(c); return c; });
   refreshPage(p); renderSel();
   if (done) { commit(p, styleBefore); styleBefore = null; }
 }
@@ -1635,9 +1661,10 @@ $('#styleSize').addEventListener('change', () => applyStyle(() => {}, true));
 /* ---------------- Text ---------------- */
 function textTap(p, x, y) {
   const hit = [...p.items].reverse().find(it => it.t === 'text' && inBox(bbox(it), x, y, 4));
-  const before = JSON.stringify(p.items);
+  const before = snap(p);
   let it = hit;
-  if (!it) {
+  if (it) { it = { ...hit }; p.items[p.items.indexOf(hit)] = it; }   // bearbeitet wird eine Kopie
+  else {
     it = { t: 'text', id: uid(), x, y: y - prefs.textSize * 0.68, w: Math.min(340, p.w - x - 14), text: '', size: prefs.textSize, color: prefs.color, bold: prefs.bold };
     if (it.w < 80) { it.w = 180; it.x = Math.max(8, p.w - 190); }
     p.items.push(it);
@@ -1686,7 +1713,7 @@ async function insertImage(file) {
   const r = pe.el.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), k = r.width / p.w;
   const cy = clamp(((wr.top + wr.height / 2) - r.top) / k, h / 2, p.h - h / 2);
   const it = { t: 'img', id: uid(), x: (p.w - w) / 2, y: cy - h / 2, w, h, src };
-  const before = JSON.stringify(p.items);
+  const before = snap(p);
   p.items.push(it);
   setTool('lasso');
   refreshPage(p); commit(p, before);
@@ -1834,14 +1861,14 @@ $('#menuPop').addEventListener('click', async e => {
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
-  else if (m === 'penTest') { penLog.length = 0; $('#penLog').textContent = 'Warte auf Stift …'; $('#penTest').hidden = false; }
+  else if (m === 'penTest') { penLog.length = 0; $('#penLog').textContent = 'Warte auf Stift …'; $('#penTest').hidden = false; penTestOn = true; }
 });
 
 /* Stift-Test: zeigt, wie Chrome die S-Pen-Tasten meldet (zur Fehlersuche) */
 const penLog = [];
 let lastButtons = -1;
 function logPen(e) {
-  if ($('#penTest').hidden) return;
+  if (!penTestOn) return;
   if (e.type === 'pointermove' && e.buttons === lastButtons) return;
   lastButtons = e.buttons ?? -1;
   penLog.unshift(`${e.type.replace('pointer', '')}  typ=${e.pointerType ?? '-'}  taste=${e.button ?? '-'}  tasten=${e.buttons ?? '-'}  druck=${(e.pressure ?? 0).toFixed(2)}  → ${penButton(e) || hoverButton(e) || (penBtn && e.pressure > 0) ? 'RADIERER' : 'normal'}  merkt=${penBtn ? 'Taste' : '-'}`);
@@ -1850,7 +1877,8 @@ function logPen(e) {
 }
 for (const t of ['pointerdown', 'pointerup', 'pointermove', 'pointercancel', 'contextmenu', 'auxclick'])
   window.addEventListener(t, logPen, true);
-$('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true; });
+let penTestOn = false;
+$('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true; penTestOn = false; });
 $('#optFinger').addEventListener('change', e => { prefs.finger = e.target.checked; savePrefs(); toast(prefs.finger ? 'Finger zeichnet jetzt. Scrollen mit zwei Fingern.' : 'Finger scrollt, nur der Stift zeichnet.'); });
 $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.checked; savePrefs(); });
 
@@ -2021,9 +2049,11 @@ thumbList.addEventListener('pointerup', endDrag);
 thumbList.addEventListener('pointercancel', endDrag);
 function queueThumb(id) {
   if (panel.hidden) return;
-  thumbQueue.add(id); clearTimeout(thumbT); thumbT = setTimeout(flushThumbs, 300);
+  thumbQueue.add(id); clearTimeout(thumbT); thumbT = setTimeout(flushThumbs, 1200);
 }
 async function flushThumbs() {
+  // Vorschaubilder erst in einer Schreibpause erneuern
+  if (act) { thumbT = setTimeout(flushThumbs, 800); return; }
   const ids = [...thumbQueue]; thumbQueue.clear();
   for (const id of ids) {
     const p = S.note && pageById(id), el = thumbEls.get(id);
@@ -2174,9 +2204,17 @@ async function pageThumb(p, W) {
   const c = document.createElement('canvas'); c.width = W; c.height = Math.round(p.h * r);
   const ctx = c.getContext('2d');
   if (p.pdf != null && pdf) {
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
-    const pg = await pdf.getPage(p.pdf + 1);
-    await pg.render({ canvasContext: ctx, viewport: pg.getViewport({ scale: r }) }).promise;
+    // PDF-Hintergrund der Vorschau nur einmal rendern und dann wiederverwenden
+    const cache = pdf._thumbBg ||= new Map(), key = p.pdf + ':' + W;
+    let bg = cache.get(key);
+    if (!bg) {
+      bg = document.createElement('canvas'); bg.width = c.width; bg.height = c.height;
+      const bx = bg.getContext('2d'); bx.fillStyle = '#fff'; bx.fillRect(0, 0, bg.width, bg.height);
+      const pg = await pdf.getPage(p.pdf + 1);
+      await pg.render({ canvasContext: bx, viewport: pg.getViewport({ scale: r }) }).promise;
+      cache.set(key, bg);
+    }
+    ctx.drawImage(bg, 0, 0);
     ctx.setTransform(r, 0, 0, r, 0, 0); await paintOverlay(ctx, p, false);
   } else { ctx.setTransform(r, 0, 0, r, 0, 0); await paintOverlay(ctx, p, true); }
   return c;
