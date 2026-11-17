@@ -668,6 +668,34 @@ function renderInkSoon(pe, p) {
   if (!pe.visible || pe.inkRaf) return;
   pe.inkRaf = requestAnimationFrame(() => { pe.inkRaf = 0; renderInk(pe, p); });
 }
+/* Nur einen Bereich neu zeichnen (Radieren, Verschieben): geänderte Rechtecke sammeln und einmal pro
+   Bildschirmbild nur dort löschen und die Elemente zeichnen, die hineinragen. Viel schneller als die ganze Seite. */
+function renderRegionSoon(pe, p, box) {
+  if (!pe.visible || !box) return;
+  pe.dirty = pe.dirty ? unionBox([pe.dirty, box]) : box;
+  if (pe.regRaf || pe.inkRaf) return;                    // ein ganzes Neuzeichnen ist ohnehin geplant
+  pe.regRaf = requestAnimationFrame(() => {
+    pe.regRaf = 0;
+    const b = pe.dirty; pe.dirty = null;
+    if (b) renderRegion(pe, p, b);
+  });
+}
+function renderRegion(pe, p, b) {
+  const r = ratio(p);
+  if (pe.ink.width !== Math.round(p.w * r) || pe.ink.height !== Math.round(p.h * r)) return renderInk(pe, p);
+  const items = p.items.filter(it => overlaps(bbox(it), b));
+  const paint = (ctx, scale) => {
+    const m = 2 / scale, x = b.x - m, y = b.y - m, w = b.w + 2 * m, h = b.h + 2 * m;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    ctx.clearRect(x, y, w, h);
+    drawItems(ctx, items, () => renderInk(pe, p));
+    ctx.restore();
+  };
+  const ctx = pe.ink.getContext('2d'); ctx.setTransform(r, 0, 0, r, 0, 0);
+  paint(ctx, r);
+  if (pe.det) paint(detailCtx(pe), pe.det.r);
+}
 /* Neue Elemente liegen ganz oben: nur sie dazuzeichnen statt die ganze Seite neu */
 function drawAdded(pe, p, items) {
   if (!pe.visible) return;
@@ -1506,7 +1534,7 @@ function eraseAt(x, y) {
   // Zwischenpositionen ergänzen, damit schnelle Bewegungen nichts überspringen
   const lx = act.ex ?? x, ly = act.ey ?? y, steps = Math.max(1, Math.ceil(Math.hypot(x - lx, y - ly) / (r * 0.5)));
   act.ex = x; act.ey = y;
-  let changed = false;
+  let changed = false, box = null;
   for (let s = 1; s <= steps; s++) {
     const ex = lx + (x - lx) * s / steps, ey = ly + (y - ly) * s / steps;
     const out = [];
@@ -1514,6 +1542,9 @@ function eraseAt(x, y) {
       if (it.t !== 'stroke' && it.t !== 'shape') { out.push(it); continue; }
       if (!hitItem(it, ex, ey, r)) { out.push(it); continue; }
       changed = true;
+      // betroffener Bereich: beim ganzen Strich dessen Fläche, beim Bereichsradierer nur der Radierkreis
+      const hb = (prefs.emode === 'stroke' || it.t === 'shape') ? bbox(it) : { x: ex - r - it.size * 2, y: ey - r - it.size * 2, w: 2 * r + it.size * 4, h: 2 * r + it.size * 4 };
+      box = box ? unionBox([box, hb]) : hb;
       if (prefs.emode === 'stroke' || it.t === 'shape') continue;
       // Bereichsradierer: Strich an der Radierstelle auftrennen
       const rr = r + penMaxW(it) / 2 * 0.5;
@@ -1527,7 +1558,7 @@ function eraseAt(x, y) {
     }
     p.items = out;
   }
-  if (changed) { act.changed = true; renderInkSoon(act.pe, p); }
+  if (changed) { act.changed = true; renderRegionSoon(act.pe, p, box); }
 }
 function moveAct(e) {
   if (act.tool === 'btnErase') return btnEraseMove(e);
@@ -1717,9 +1748,11 @@ function renderSel() {
 function applySel(fn, k, da = 0) {
   const { p } = act;
   p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k, da) : it);
-  // Anzeige pro Bildschirmbild nur einmal auffrischen
-  const pe = act.pe;
-  if (!pe.selRaf) pe.selRaf = requestAnimationFrame(() => { pe.selRaf = 0; renderInk(pe, p); renderText(pe, p); renderSel(); });
+  // Nur den Bereich neu zeichnen, wo die Auswahl war und jetzt ist
+  const pe = act.pe, now = unionBox(p.items.filter(it => act.orig.has(it.id)).map(bbox));
+  renderRegionSoon(pe, p, act.lastBox ? unionBox([act.lastBox, now]) : unionBox([now, ...[...act.orig.values()].map(bbox)]));
+  act.lastBox = now;
+  if (!pe.selRaf) pe.selRaf = requestAnimationFrame(() => { pe.selRaf = 0; renderText(pe, p); renderSel(); });
 }
 function selAction(a) {
   if (!S.sel) return;
@@ -2619,7 +2652,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
