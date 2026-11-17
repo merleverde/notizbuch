@@ -476,6 +476,11 @@ function addPageEl(p, beforeEl = null) {
   el.className = 'page'; el.dataset.id = p.id;
   el.innerHTML = '<canvas class="bg"></canvas><canvas class="ink"></canvas><div class="text"></div><canvas class="live"></canvas><span class="pno"></span>';
   const pe = { el, bg: el.children[0], ink: el.children[1], text: el.children[2], live: el.children[3], sc: null, visible: false, task: null };
+  // Bei knappem Grafikspeicher verwirft Chrome Zeichenflächen (sie werden schwarz/leer): danach neu zeichnen
+  for (const c of [pe.bg, pe.ink, pe.live]) {
+    c.addEventListener('contextlost', () => { pe.sc = null; });
+    c.addEventListener('contextrestored', () => { pe.sc = null; scheduleRender(); });
+  }
   pageEls.set(p.id, pe); elToPe.set(el, pe);
   pagesHost.insertBefore(el, beforeEl); io.observe(el);
   return pe;
@@ -1074,10 +1079,20 @@ function tapAt(cx, cy) {
 /* Live-Ebene. Hinweis: den „desynchronized“-Modus von Chrome nicht verwenden. Auf Samsung-Tablets
    wird die durchsichtige Ebene damit beim Zoomen schwarz. */
 const liveCtx = pe => pe.lctx ||= pe.live.getContext('2d');
+/* Die Live-Ebene deckt nur den sichtbaren Teil der Seite ab, nicht die ganze Seite.
+   So bleibt sie auch bei starkem Zoom klein und der Grafikspeicher reicht. */
 function prepLive(pe, p) {
-  const r = ratio(p), ctx = liveCtx(pe);
-  if (!sizeCanvas(pe.live, p, r)) ctx.clearRect(0, 0, pe.live.width, pe.live.height);
-  ctx.setTransform(r, 0, 0, r, 0, 0);
+  const ctx = liveCtx(pe), sc = scale(), d = dpr();
+  const pr = pe.el.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+  const x0 = Math.max(0, wr.left - pr.left), y0 = Math.max(0, wr.top - pr.top);
+  const x1 = Math.min(pr.width, wr.right - pr.left), y1 = Math.min(pr.height, wr.bottom - pr.top);
+  const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+  const W = Math.round(w * d), H = Math.round(h * d);
+  if (pe.live.width !== W || pe.live.height !== H) { pe.live.width = W; pe.live.height = H; }
+  else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); }
+  Object.assign(pe.live.style, { left: x0 + 'px', top: y0 + 'px', width: w + 'px', height: h + 'px', right: 'auto', bottom: 'auto' });
+  // Seitenkoordinaten → Pixel des Ausschnitts
+  ctx.setTransform(sc * d, 0, 0, sc * d, -x0 * d, -y0 * d);
   return ctx;
 }
 function clearLive(pe) { const c = pe.live, ctx = liveCtx(pe); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, c.width, c.height); }
@@ -2197,6 +2212,7 @@ async function closeEditor() {
   thumbList.innerHTML = ''; thumbEls.clear();
   pdf?.destroy();
   $('#editor').hidden = true; $('#library').hidden = false;
+  if (updateReady) return location.reload();          // bereitliegendes Update jetzt übernehmen
   renderLibrary();
 }
 /* Kleine Vorschau einer Seite (Bibliothek, Seitenübersicht) */
@@ -2457,9 +2473,31 @@ if ('launchQueue' in window) {
     if (h) { if (S.note) await closeEditor(); importPdf(await h.getFile(), h); }
   });
 }
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+/* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
+   In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
+const APP_VERSION = 24;
+$('#appVersion').textContent = `Version ${APP_VERSION}`;
+let updateReady = false;
+function applyUpdate() {
+  if (S.note || saving) { updateReady = true; return; }
+  location.reload();
 }
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // beim Zurückkehren in die App nach Updates schauen
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) applyUpdate(); });
+}
+$('#btnUpdate').addEventListener('click', async () => {
+  hidePops();
+  const reg = await navigator.serviceWorker?.getRegistration();
+  if (!reg) return toast('Updates werden hier nicht unterstützt.');
+  toast('Suche nach Updates …', 2000);
+  try { await reg.update(); } catch {}
+  if (!reg.installing && !reg.waiting) toast(`Du hast die neueste Version (${APP_VERSION}).`, 3000);
+});
 
 /* Vorschaubilder der Papiervorlagen in den Auswahldialogen */
 function paperPreviews() {

@@ -392,3 +392,4 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
   background: var(--danger); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%); pointer-events: none;
 }
 .paper-pick { row-gap: 14px; }
+.app-version { font-size: .75rem; color: var(--muted); padding: 2px 12px 6px; font-variant-numeric: tabular-nums; }
