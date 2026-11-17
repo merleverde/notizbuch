@@ -833,12 +833,30 @@ function downloadBytes(bytes, name) {
 function setFileClean() { S.fileDirty = false; S.note.unsaved = false; }
 
 /* pickNew = „Speichern unter“: neue Datei wählen; die Notiz gehört danach zu dieser Datei. */
-async function saveToFile(pickNew = false) {
+/* Fertige PDF-Bytes prüfen, bevor sie eine Datei überschreiben dürfen */
+function checkPdf(bytes) {
+  const head = new TextDecoder().decode(bytes.subarray(0, 5)), tail = new TextDecoder().decode(bytes.subarray(-32));
+  if (bytes.length < 200 || head !== '%PDF-' || !tail.includes('%%EOF')) throw new Error('Die erzeugte PDF ist unvollständig. Die Datei wurde nicht verändert.');
+  return bytes;
+}
+
+/* Es läuft immer nur ein Speichervorgang; ein zweiter wartet, bis der erste fertig ist. */
+let saving = null;
+function saveToFile(pickNew = false) {
+  if (saving) return saving.then(() => pickNew ? saveToFile(true) : !S.fileDirty || saveToFile(false));
+  saving = doSave(pickNew).finally(() => { saving = null; });
+  return saving;
+}
+async function doSave(pickNew) {
   commitText();
   const btn = $('#btnSave'); btn.disabled = true;
+  let created = null, lock = null;
+  // Die PDF schon erzeugen, während der Speicherdialog offen ist: so liegt keine halb angelegte Datei herum
+  const bytesP = buildPdf().then(checkPdf);
+  bytesP.catch(() => {});
   try {
     if (!FSA) {
-      downloadBytes(await buildPdf(), pdfName());
+      downloadBytes(await bytesP, pdfName());
       setFileClean();
       toast('PDF wurde heruntergeladen.');
       return true;
@@ -846,24 +864,40 @@ async function saveToFile(pickNew = false) {
     let h = pickNew ? null : S.handle;
     if (!h) {
       const name = S.handle ? pdfName().replace(/\.pdf$/, ' (bearbeitet).pdf') : pdfName();
-      h = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
+      h = created = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
     }
+    // Bildschirm während des Speicherns wach halten (erst nach dem Dialog, der braucht den frischen Fingertipp)
+    try { lock = await navigator.wakeLock?.request('screen'); } catch {}
     if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await h.requestPermission({ mode: 'readwrite' })) !== 'granted')
       throw new Error('Die App darf die Datei nicht überschreiben.');
-    $('#saveState').textContent = 'Speichert …';
-    const bytes = await buildPdf();
+    $('#saveState').textContent = 'Speichert … bitte die App nicht verlassen';
+    const bytes = await bytesP;
     const w = await h.createWritable();
-    await w.write(new Blob([bytes], { type: 'application/pdf' }));
-    await w.close();
+    try {
+      await w.write(new Blob([bytes], { type: 'application/pdf' }));
+      await w.close();
+    } catch (err) {
+      try { await w.abort(); } catch {}                    // Schreiben abbrechen: die alte Datei bleibt erhalten
+      throw err;
+    }
+    // Gegenprobe: ist die Datei jetzt wirklich so groß wie die erzeugte PDF?
+    try {
+      const size = (await h.getFile()).size;
+      if (size !== bytes.length) throw new Error(`Die Datei ist nur ${size} statt ${bytes.length} Bytes groß. Bitte nochmal speichern.`);
+    } catch (err) { if (/Bytes groß/.test(err.message)) throw err; }
+    created = null;
     if (h !== S.handle) { S.handle = h; await dbPut('handles', { id: S.note.id, handle: h }); }
     S.note.fileName = h.name;
     setFileClean();
     toast(`In „${h.name}“ gespeichert.`);
     return true;
   } catch (e) {
-    if (e.name !== 'AbortError') toast('Speichern fehlgeschlagen: ' + e.message, 6000);
+    // Eine gerade erst angelegte, leere Datei wieder entfernen
+    if (created) { try { await created.remove?.(); } catch {} }
+    if (e.name !== 'AbortError') toast('Speichern fehlgeschlagen: ' + e.message + (created ? ' Falls eine leere Datei entstanden ist, kannst du sie löschen.' : ''), 8000);
     return false;
   } finally {
+    try { await lock?.release(); } catch {}
     btn.disabled = false; updState(); saveLocal();
   }
 }
@@ -2078,6 +2112,7 @@ function askClose() {
 }
 async function closeEditor() {
   commitText();
+  if (saving) await saving;                            // laufendes Speichern erst abschließen
   if (S.fileDirty) {
     const choice = await askClose();
     if (choice === 'cancel') return;
