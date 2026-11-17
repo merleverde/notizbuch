@@ -938,6 +938,24 @@ function drawRecog(a) {
   ctx.clearRect(0, 0, a.p.w, a.p.h);
   if (r.kind === 'markerLine') drawStroke(ctx, { ...a.item, pts: [[r.x1, r.y1, .5], [r.x2, r.y2, .5]] });
   else drawShape(ctx, r);
+  if (r.kind === 'markerLine' || r.kind === 'line') drawLineInfo(ctx, r.x1, r.y1, r.x2, r.y2, a.k);
+}
+/* Beim Ziehen einer Geraden: Winkel zur Waagerechten und Länge neben dem Linienende anzeigen */
+function drawLineInfo(ctx, x1, y1, x2, y2, k) {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  if (len * k < 8) return;
+  let deg = Math.round(Math.atan2(y1 - y2, x2 - x1) * 180 / Math.PI); if (deg < 0) deg += 360;
+  const text = `${deg}°  ·  ${(len / 72 * 2.54).toLocaleString('de-DE', { maximumFractionDigits: 1 })} cm`;
+  const fs = 13 / k, pad = 6 / k;
+  ctx.save();
+  ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(text).width + 2 * pad, h = fs + 2 * pad;
+  // Schild neben das Linienende setzen, aber auf der Seite halten
+  const bx = clamp(x2 + 14 / k, 2 / k, ctx.canvas.width / ctx.getTransform().a - w - 2 / k);
+  const by = clamp(y2 - h - 14 / k, 2 / k, ctx.canvas.height / ctx.getTransform().d - h - 2 / k);
+  ctx.fillStyle = 'rgba(28,35,33,.88)'; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 6 / k); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillText(text, bx + pad, by + h / 2);
+  ctx.restore();
 }
 function addPts(e) {
   const it = act.item, ctx = act.ctx, k = act.k;
@@ -1098,7 +1116,8 @@ function moveAct(e) {
     ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
   } else if (t === 'shape') {
     ctx.clearRect(0, 0, act.p.w, act.p.h);
-    drawShape(ctx, shapeFromAct());
+    const sh = shapeFromAct(); drawShape(ctx, sh);
+    if (sh.kind === 'line' || sh.kind === 'arrow') drawLineInfo(ctx, sh.x1, sh.y1, sh.x2, sh.y2, act.k);
   } else if (t === 'move') {
     const dx = x - act.x0, dy = y - act.y0;
     applySel((a, b) => [a + dx, b + dy], 1);
