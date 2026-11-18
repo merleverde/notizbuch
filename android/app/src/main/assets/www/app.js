@@ -451,16 +451,17 @@ function hitItem(it, x, y, r) {
   }
   return inBox(bbox(it), x, y);
 }
-/* Element verschieben/skalieren (fn, k) und optional um da drehen (fn enthält dann die Drehung) */
+/* Element verschieben/skalieren (fn, k) und optional um da drehen (fn enthält dann die Drehung).
+   Striche und Formen behalten beim Vergrößern ihre Strichstärke (wie in Samsung Notes);
+   Text und Bilder wachsen mit. */
 function xform(src, fn, k, da = 0) {
   const it = structuredClone(src);
-  if (it.t === 'stroke') { it.pts = it.pts.map(([x, y, pr]) => { const [a, b] = fn(x, y); return [+a.toFixed(2), +b.toFixed(2), pr]; }); it.size *= k; }
+  if (it.t === 'stroke') { it.pts = it.pts.map(([x, y, pr]) => { const [a, b] = fn(x, y); return [+a.toFixed(2), +b.toFixed(2), pr]; }); }
   else if (it.t === 'shape') {
     // Rechteck/Ellipse lassen sich nur als Vieleck drehen
     if (da && (it.kind === 'rect' || it.kind === 'ellipse')) { it.pts = shapeOutline(it).slice(0, -1); it.kind = 'poly'; }
     if (it.kind === 'poly') it.pts = it.pts.map(([x, y]) => fn(x, y).map(v => +v.toFixed(2)));
     else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); }
-    it.size *= k;
   } else {
     // Bild/Text: Mittelpunkt mitführen; Bilder drehen sich mit, Textfelder bleiben gerade
     const h0 = it.t === 'img' ? it.h : (it.h || it.size * 1.35);
@@ -790,14 +791,22 @@ function currentPage() {
   }
   return best;
 }
-function setZoom(z, cx, cy) {
-  const old = scale();
+/* Zoomen um einen Bildschirmpunkt. Gemerkt wird, welcher Punkt der Seite dort liegt (anchor); nach dem
+   neuen Layout wird so gescrollt, dass genau dieser Seitenpunkt wieder unter (cx, cy) liegt. Das stimmt
+   auch, wenn die Seite zentriert ist oder schmaler als der Bildschirm (die alte Rechnung ging von einer
+   links beginnenden Fläche aus, dadurch rutschte das Bild beim Zoomen nach rechts). */
+function zoomAnchor(cx, cy) {
+  const p = pageAt(cx, cy) || currentPage();
+  const [x, y] = toPage(p, cx, cy);
+  return { p, x, y };
+}
+function setZoom(z, cx, cy, anchor = null) {
+  const a = anchor || zoomAnchor(cx, cy);
   S.zoom = clamp(z, 0.5, 5);
-  const ns = scale(), r = wrap.getBoundingClientRect();
-  const mx = cx - r.left, my = cy - r.top, sl = wrap.scrollLeft, st = wrap.scrollTop;
   layout();
-  wrap.scrollLeft = (sl + mx) * ns / old - mx;
-  wrap.scrollTop = (st + my) * ns / old - my;
+  const r = pageEls.get(a.p.id).el.getBoundingClientRect(), k = r.width / a.p.w;
+  wrap.scrollLeft += r.left + a.x * k - cx;
+  wrap.scrollTop += r.top + a.y * k - cy;
 }
 
 /* ---------------- Verlauf & Speichern ---------------- */
@@ -1246,7 +1255,36 @@ function finishBtnPage() {
   if (act.changed) commit(act.p, act.before);
 }
 
+/* Schwung beim Scrollen: nach schnellem Wischen läuft die Seite weiter und bremst sanft ab */
+let fling = 0;
+function stopFling() { if (fling) { cancelAnimationFrame(fling); fling = 0; } }
+function startFling(vx, vy) {
+  stopFling();
+  let last = performance.now();
+  const step = now => {
+    const dt = Math.min(40, now - last); last = now;
+    const sl = wrap.scrollLeft, st = wrap.scrollTop;
+    wrap.scrollLeft -= vx * dt; wrap.scrollTop -= vy * dt;
+    const f = Math.exp(-dt / 380);                      // Abbremsen (ähnlich wie bei Android-Listen)
+    vx *= f; vy *= f;
+    // am Rand angekommen: in der Richtung nicht weiterschieben
+    if (wrap.scrollLeft === sl) vx = 0;
+    if (wrap.scrollTop === st) vy = 0;
+    fling = Math.hypot(vx, vy) > 0.03 ? requestAnimationFrame(step) : 0;
+  };
+  fling = requestAnimationFrame(step);
+}
+/* Geschwindigkeit (px/ms) aus den Fingerpositionen der letzten ~100 ms */
+function panVelocity(g) {
+  const s = g.samples, now = performance.now();
+  while (s.length > 2 && now - s[0].t > 100) s.shift();
+  if (s.length < 2 || now - s[s.length - 1].t > 60) return [0, 0];   // Finger stand vor dem Loslassen still
+  const a = s[0], b = s[s.length - 1], dt = Math.max(1, b.t - a.t);
+  return [(b.x - a.x) / dt, (b.y - a.y) / dt];
+}
+
 function onDown(e) {
+  stopFling();
   if (e.target.closest('.tx.editing, .selbox, .pastechip')) return;
   removePasteChip();
   if (S.editing) commitText();
@@ -1257,8 +1295,13 @@ function onDown(e) {
   if (e.pointerType === 'touch' && !prefs.finger && !penButton(e)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = [...touches.values()];
-    if (pts.length === 1) gest = { type: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false };
-    else if (pts.length === 2) { gest = { type: 'pinch', d0: dist(pts[0], pts[1]) || 1, z0: S.zoom }; }
+    if (pts.length === 1) gest = { type: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false, samples: [{ x: e.clientX, y: e.clientY, t: performance.now() }] };
+    else if (pts.length === 2) {
+      stopFling();
+      // der Seitenpunkt zwischen den Fingern bleibt beim Zoomen (und Verschieben mit zwei Fingern) unter den Fingern
+      const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
+      gest = S.note ? { type: 'pinch', d0: dist(pts[0], pts[1]) || 1, z0: S.zoom, anchor: zoomAnchor(mx, my) } : null;
+    }
     return;
   }
   if (act || (e.pointerType === 'mouse' && e.button !== 0 && !penButton(e))) return;
@@ -1276,10 +1319,12 @@ function onMove(e) {
     if (gest?.type === 'pan' && gest.id === e.pointerId) {
       wrap.scrollLeft -= e.clientX - gest.x; wrap.scrollTop -= e.clientY - gest.y;
       gest.x = e.clientX; gest.y = e.clientY;
+      gest.samples?.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+      if (gest.samples?.length > 30) gest.samples.shift();
       if (Math.hypot(e.clientX - gest.sx, e.clientY - gest.sy) > 10) gest.moved = true;
     } else if (gest?.type === 'pinch' && touches.size >= 2) {
       const [a, b] = [...touches.values()];
-      setZoom(gest.z0 * dist(a, b) / gest.d0, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      setZoom(gest.z0 * dist(a, b) / gest.d0, (a.x + b.x) / 2, (a.y + b.y) / 2, gest.anchor);
     }
     return;
   }
@@ -1290,6 +1335,10 @@ function onUp(e) {
   if (touches.has(e.pointerId)) {
     touches.delete(e.pointerId);
     if (gest?.type === 'pan' && gest.id === e.pointerId && !gest.moved && e.type === 'pointerup' && performance.now() - gest.t < 450) tapAt(e.clientX, e.clientY);
+    else if (gest?.type === 'pan' && gest.id === e.pointerId && gest.samples && e.type === 'pointerup' && touches.size === 0) {
+      const [vx, vy] = panVelocity(gest);
+      if (Math.hypot(vx, vy) > 0.25) startFling(vx * 1.15, vy * 1.15);   // nur nach schnellem Wischen
+    }
     gest = null;
     if (touches.size === 1) { const [[id, pt]] = [...touches]; gest = { type: 'pan', id, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t: 0, moved: true }; }
     return;
@@ -2230,12 +2279,19 @@ function updToolbar() {
 }
 function setTool(t) {
   commitText();
-  prefs.tool = t; savePrefs();
+  prefs.tool = t;
+  if (t === 'pen' || t === 'marker') prefs.lastDraw = t;
+  savePrefs();
   if (t !== 'lasso') setSel(null);
   updToolbar();
 }
 function setColor(c) {
-  prefs.color = c; savePrefs(); updToolbar(); styleEditing();
+  prefs.color = c; savePrefs();
+  // Lasso mit Auswahl: die Auswahl umfärben. Radierer oder Lasso ohne Auswahl: zurück zum zuletzt
+  // benutzten Stift (Stift oder Marker) in der neuen Farbe.
+  if (prefs.tool === 'lasso' && S.sel) setSelColor(c);
+  else if (prefs.tool === 'eraser' || prefs.tool === 'lasso') { setTool(prefs.lastDraw || 'pen'); return; }
+  updToolbar(); styleEditing();
 }
 
 const PEN_LABELS = { fountain: 'Füller', ball: 'Kuli', pencil: 'Blei', brush: 'Pinsel', calligraphy: 'Kalli' };
@@ -2925,7 +2981,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 33;
+const APP_VERSION = 34;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
