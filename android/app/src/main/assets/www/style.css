@@ -194,7 +194,7 @@ button { cursor: pointer; }
 .size-box { display: flex; align-items: center; gap: 8px; flex: none; }
 .size-dot { width: 24px; height: 24px; display: grid; place-items: center; }
 .size-dot::after { content: ""; width: var(--d, 6px); height: var(--d, 6px); max-width: 24px; max-height: 24px; border-radius: 50%; background: var(--fg); }
-#sizeRange { width: 120px; accent-color: var(--accent); }
+#sizeRange { width: 90px; accent-color: var(--accent); }
 #alphaVal { font-variant-numeric: tabular-nums; }
 .alpha-pop { width: 260px; padding: 14px 16px; }
 .alpha-head { display: flex; justify-content: space-between; font-size: .9rem; margin-bottom: 8px; }
@@ -277,6 +277,32 @@ button { cursor: pointer; }
   border-radius: 50%; background: #2f5d50; border: 3px solid #fff; cursor: nwse-resize;
   box-shadow: 0 1px 3px rgba(0,0,0,.3);
 }
+/* Stempel-Auswahl */
+.stamp-pop { width: 300px; padding: 12px 14px; gap: 8px; }
+.stamp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.popover .stamp-grid button {
+  position: relative; height: 52px; padding: 0; justify-content: center; border: 1px solid var(--line); border-radius: 10px;
+  font-size: 1.6rem; line-height: 1; display: grid; place-items: center; background: var(--surface);
+}
+.popover .stamp-grid button.word { font-size: .8rem; font-weight: 700; }
+.popover .stamp-grid button.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.stamp-grid canvas { width: 48px; height: 36px; }
+.stamp-grid .del {
+  position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; background: var(--danger); color: #fff;
+  font-size: .8rem; line-height: 20px; text-align: center;
+}
+.stamp-hint { margin: 0; font-size: .78rem; color: var(--muted); }
+/* Zirkel: eingestellter Kreis (gestrichelt) und Mittelpunkt */
+.compass-ov { position: absolute; z-index: 2; pointer-events: none; border: 1.5px dashed rgba(47,93,80,.6); border-radius: 50%; box-sizing: border-box; }
+.compass-ov i { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid #2f5d50; background: #fff; }
+/* Seitengriffe: rechts = Breite, unten = Höhe */
+.selbox .edge {
+  position: absolute; background: #fff; border: 3px solid #2f5d50; border-radius: 9px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.selbox .edge.ew { right: -10px; top: 50%; width: 14px; height: 36px; margin-top: -18px; cursor: ew-resize; }
+.selbox .edge.eh { bottom: -10px; left: 50%; width: 36px; height: 14px; margin-left: -18px; cursor: ns-resize; }
+.selbox .edge::before { content: ""; position: absolute; inset: -12px; }   /* größere Tippfläche */
 .selbar {
   position: absolute; left: -2px; bottom: calc(100% + 10px);
   display: flex; gap: 2px; padding: 4px; white-space: nowrap;

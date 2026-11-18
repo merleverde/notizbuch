@@ -15,7 +15,7 @@ const revive = h => (window.reviveHandle ? window.reviveHandle(h) : h);
 const A4 = [595.28, 841.89];
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 const COLORS = ['#1b1f24', '#1f4fd1', '#d0312d', '#1e8e4f', '#ef8a00', '#8a3fc2', '#ffd21f'];
-const SIZE_RANGE = { pen: [0.5, 10, 0.5], marker: [4, 40, 1], eraser: [6, 60, 2], shape: [0.5, 10, 0.5] };
+const SIZE_RANGE = { pen: [0.5, 10, 0.5], marker: [4, 40, 1], eraser: [6, 60, 2], shape: [0.5, 10, 0.5], stamp: [12, 90, 2] };
 const DATA_NAME = 'notizbuch.json';
 const ORIG_NAME = 'notizbuch-original.pdf';
 
@@ -24,6 +24,8 @@ const prefs = Object.assign({
   tool: 'pen', color: COLORS[0], sizes: { pen: 2, marker: 14, eraser: 20, shape: 2 },
   penStyle: 'fountain', smoothing: 0, shape: 'rect', emode: 'area', textSize: 16, bold: false, finger: false, editable: true, folders: []
 }, (() => { try { return JSON.parse(localStorage.getItem('notizbuch.prefs')) || {}; } catch { return {}; } })());
+// neue Werkzeuge bekommen ihre Standardgröße auch bei schon gespeicherten Einstellungen
+prefs.sizes = { pen: 2, marker: 14, eraser: 20, shape: 2, stamp: 32, ...prefs.sizes };
 function savePrefs() { try { localStorage.setItem('notizbuch.prefs', JSON.stringify(prefs)); } catch {} }
 
 /* ---------------- IndexedDB ---------------- */
@@ -454,7 +456,7 @@ function hitItem(it, x, y, r) {
 /* Element verschieben/skalieren (fn, k) und optional um da drehen (fn enthält dann die Drehung).
    Striche und Formen behalten beim Vergrößern ihre Strichstärke (wie in Samsung Notes);
    Text und Bilder wachsen mit. */
-function xform(src, fn, k, da = 0) {
+function xform(src, fn, k, da = 0, kx = k, ky = k) {
   const it = structuredClone(src);
   if (it.t === 'stroke') { it.pts = it.pts.map(([x, y, pr]) => { const [a, b] = fn(x, y); return [+a.toFixed(2), +b.toFixed(2), pr]; }); }
   else if (it.t === 'shape') {
@@ -466,10 +468,11 @@ function xform(src, fn, k, da = 0) {
     // Bild/Text: Mittelpunkt mitführen; Bilder drehen sich mit, Textfelder bleiben gerade
     const h0 = it.t === 'img' ? it.h : (it.h || it.size * 1.35);
     const [cx, cy] = fn(it.x + it.w / 2, it.y + h0 / 2);
-    it.w *= k;
-    if (it.t === 'img') { it.h *= k; if (da) it.rot = ((it.rot || 0) + da) % (Math.PI * 2); }
-    else { it.size *= k; if (it.h) it.h *= k; }
-    it.x = cx - it.w / 2; it.y = cy - h0 * k / 2;
+    let h1 = h0;
+    it.w *= kx;
+    if (it.t === 'img') { it.h *= ky; h1 = it.h; if (da) it.rot = ((it.rot || 0) + da) % (Math.PI * 2); }
+    else if (kx === ky) { it.size *= k; if (it.h) it.h *= k; h1 = h0 * k; }   // Text: nur gleichmäßig wächst die Schrift
+    it.x = cx - it.w / 2; it.y = cy - h1 / 2;
   }
   return it;
 }
@@ -669,7 +672,7 @@ function layout() {
     pe.el.classList.toggle('marked', !!p.mark);
     renderText(pe, p);
   });
-  renderSel(); scheduleRender();
+  renderSel(); renderCompass(); scheduleRender();
 }
 let renderT;
 function scheduleRender() { clearTimeout(renderT); renderT = setTimeout(renderVisible, 90); }
@@ -1295,7 +1298,16 @@ function onDown(e) {
   if (e.pointerType === 'touch' && !prefs.finger && !penButton(e)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = [...touches.values()];
-    if (pts.length === 1) gest = { type: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false, samples: [{ x: e.clientX, y: e.clientY, t: performance.now() }] };
+    if (pts.length === 1) {
+      const g = gest = { type: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false, samples: [{ x: e.clientX, y: e.clientY, t: performance.now() }] };
+      // Finger lange still halten → „Einfügen“ an dieser Stelle
+      g.lpT = setTimeout(() => {
+        if (gest !== g || g.moved || touches.size !== 1 || !getClip()) return;
+        const p = pageAt(g.sx, g.sy); if (!p) return;
+        g.lp = true; navigator.vibrate?.(15);
+        const [x, y] = toPage(p, g.sx, g.sy); showPasteChip(p, x, y);
+      }, 600);
+    }
     else if (pts.length === 2) {
       stopFling();
       // der Seitenpunkt zwischen den Fingern bleibt beim Zoomen (und Verschieben mit zwei Fingern) unter den Fingern
@@ -1334,6 +1346,8 @@ function onUp(e) {
   if (penBtnHandler(e)) return;
   if (touches.has(e.pointerId)) {
     touches.delete(e.pointerId);
+    clearTimeout(gest?.lpT);
+    if (gest?.lp) { gest = null; return; }                // nach langem Drücken: kein Tippen auslösen
     if (gest?.type === 'pan' && gest.id === e.pointerId && !gest.moved && e.type === 'pointerup' && performance.now() - gest.t < 450) tapAt(e.clientX, e.clientY);
     else if (gest?.type === 'pan' && gest.id === e.pointerId && gest.samples && e.type === 'pointerup' && touches.size === 0) {
       const [vx, vy] = panVelocity(gest);
@@ -1378,6 +1392,13 @@ function startAct(tool, p, e, extra = {}) {
   const [x, y] = toPageA(e.clientX, e.clientY);
   Object.assign(act, { x0: x, y0: y, x, y });
   if (tool !== 'move' && tool !== 'scale' && tool !== 'text') act.ctx = prepLive(pe, p);
+  if ((tool === 'shape' && prefs.shape !== 'compass') || tool === 'lasso' || tool === 'text') {
+    // langes Drücken ohne Bewegung → „Einfügen“ (Stift/Marker: über die Halteerkennung in onHold)
+    const a = act;
+    a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 600);
+  }
+  if (tool === 'shape' && prefs.shape === 'compass') { compassStart(act); return; }
+  if (tool === 'stamp') { stampPreview(act); return; }
   if (tool === 'eraser' && prefs.emode === 'cover') {
     act.tool = 'cover';
     act.item = { t: 'stroke', id: uid(), tool: 'cover', color: coverColor(act.p), size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
@@ -1392,8 +1413,11 @@ function startAct(tool, p, e, extra = {}) {
     }
     addPts(e);
     // Lineal: der Strich wird von Anfang an als Gerade gezogen
-    if (prefs.ruler) act.recog = { kind: 'markerLine', x1: x, y1: y, x2: x, y2: y };
-    else holdCheck(x, y);
+    if (prefs.ruler) {
+      act.recog = { kind: 'markerLine', x1: x, y1: y, x2: x, y2: y };
+      const a = act;
+      a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 600);
+    } else holdCheck(x, y);
   } else if (tool === 'eraser') {
     eraseAt(x, y); drawEraser(x, y);
   } else if (tool === 'lasso') {
@@ -1409,9 +1433,26 @@ function holdCheck(x, y) {
   const a = act;
   act.hold = { x, y, t: setTimeout(() => onHold(a), 600) };
 }
+/* Langes Drücken auf eine Stelle (ohne Bewegung): „Einfügen“ anbieten, wenn etwas in der Zwischenablage liegt.
+   Der angefangene Punkt bzw. die Aktion wird dabei verworfen. */
+function longPressPaste(a, x, y) {
+  a.lp = true;
+  clearTimeout(a.hold?.t); clearTimeout(a.lpT);
+  if (a.item) a.item.pts = [];
+  if (a.ctx) clearLive(a.pe);
+  navigator.vibrate?.(15);
+  showPasteChip(a.p, x, y);
+}
 function onHold(a) {
   if (act !== a || a.recog) return;
   const pts = a.item.pts;
+  if (pts.length) {
+    const p0 = pts[0];
+    if (pts.every(q => Math.hypot(q[0] - p0[0], q[1] - p0[1]) * a.k < 8)) {   // Stift stand still
+      if (getClip()) longPressPaste(a, p0[0], p0[1]);
+      return;
+    }
+  }
   if (a.tool === 'marker') {
     if (pts.length < 3) return;
     const [x2, y2] = snapLine(pts[0][0], pts[0][1], pts[pts.length - 1][0], pts[pts.length - 1][1]);
@@ -1704,6 +1745,8 @@ function eraseAt(x, y) {
 function moveAct(e) {
   if (act.tool === 'btnErase') return btnEraseMove(e);
   const [x, y] = toPageA(e.clientX, e.clientY);
+  if (act.lp) return;                                     // „Einfügen“ wird angeboten: Bewegung ignorieren
+  if (act.lpT && Math.hypot(x - act.x0, y - act.y0) * act.k > 8) { clearTimeout(act.lpT); act.lpT = 0; }
   act.x = x; act.y = y;
   // Seitentaste erst während des Schreibens gedrückt → ab hier radieren
   if ((act.tool === 'pen' || act.tool === 'marker') && penButton(e)) {
@@ -1725,6 +1768,10 @@ function moveAct(e) {
     ctx.fillStyle = 'rgba(47,93,80,.06)'; ctx.beginPath();
     act.poly.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b));
     ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  } else if (t === 'shape' && act.cmp) {
+    compassMove(act);
+  } else if (t === 'stamp') {
+    stampPreview(act);
   } else if (t === 'shape') {
     ctx.clearRect(0, 0, act.p.w, act.p.h);
     const sh = shapeFromAct(); drawShape(ctx, sh);
@@ -1732,6 +1779,11 @@ function moveAct(e) {
   } else if (t === 'move') {
     const dx = x - act.x0, dy = y - act.y0;
     applySel((a, b) => [a + dx, b + dy], 1);
+  } else if (t === 'scale' && act.axis) {
+    // Seitengriff: nur Breite (x) bzw. nur Höhe (y), gegenüberliegende Kante bleibt stehen
+    const { ax, ay } = act;
+    if (act.axis === 'x') { const f = Math.max(0.05, (x - ax) / Math.max(1, act.x0 - ax)); applySel((a, b) => [ax + (a - ax) * f, b], 1, 0, f, 1); }
+    else { const f = Math.max(0.05, (y - ay) / Math.max(1, act.y0 - ay)); applySel((a, b) => [a, ay + (b - ay) * f], 1, 0, 1, f); }
   } else if (t === 'scale') {
     const { ax, ay } = act, f = Math.max(0.08, Math.hypot(x - ax, y - ay) / act.d0);
     applySel((a, b) => [ax + (a - ax) * f, ay + (b - ay) * f], f);
@@ -1746,6 +1798,108 @@ function moveAct(e) {
 }
 /* Füllung: 1 = heller Farbton, 2 = volle Farbe */
 const fillFor = (color, mode) => mode === 2 ? color : mode === 1 ? shade(color, 0.3) : null;
+/* ---------------- Zirkel ----------------
+   1) Spitze auf den Mittelpunkt setzen und nach außen ziehen: legt den Radius fest (in cm angezeigt).
+   2) Danach irgendwo auf dem Kreis ansetzen und herumfahren: die Linie folgt genau dem Kreis.
+      Bei Viertel-, Halb-, Dreiviertel- und Vollkreis rastet der Bogen ein.
+   Erneut am Mittelpunkt (oder weit außerhalb) ansetzen = Zirkel neu einstellen.
+   Ein Bogen wird als gleichmäßige Linie (Stil 'shape') gespeichert: radierbar, verschiebbar, scharf im PDF. */
+S.compass = null;
+const cmLen = v => (v / 72 * 2.54).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' cm';
+function drawBadge(ctx, x, y, text, k) {
+  const fs = 13 / k, pad = 6 / k;
+  ctx.save(); ctx.setLineDash([]);
+  ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(text).width + 2 * pad, h = fs + 2 * pad;
+  ctx.fillStyle = 'rgba(28,35,33,.88)'; ctx.beginPath(); ctx.roundRect(x + 14 / k, y - h - 14 / k, w, h, 6 / k); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillText(text, x + 14 / k + pad, y - h / 2 - 14 / k);
+  ctx.restore();
+}
+function compassStart(a) {
+  const c = S.compass, k = a.k;
+  const d = c && c.pid === a.p.id ? Math.hypot(a.x0 - c.cx, a.y0 - c.cy) : Infinity;
+  if (!c || c.pid !== a.p.id || d * k < 22 || d > c.r * 2 + 60 / k) {
+    // neu einstellen: am alten Mittelpunkt angesetzt → nur den Radius ändern
+    const keep = c && c.pid === a.p.id && d * k < 22;
+    a.cmp = { mode: 'radius', cx: keep ? c.cx : a.x0, cy: keep ? c.cy : a.y0, r: 0 };
+  } else {
+    const a0 = Math.atan2(a.y0 - c.cy, a.x0 - c.cx);
+    a.cmp = { mode: 'arc', cx: c.cx, cy: c.cy, r: c.r, a0, last: a0, sweep: 0 };
+  }
+  compassMove(a);
+}
+const COMPASS_SNAP = [0.5, 1, 1.5, 2].map(f => f * Math.PI);
+function compassSweep(m) {
+  for (const t of COMPASS_SNAP) for (const s of [t, -t]) if (Math.abs(m.sweep - s) < 6 * Math.PI / 180) return s;
+  return m.sweep;
+}
+function compassArc(m, color, size) {
+  const sw = compassSweep(m), n = clamp(Math.ceil(Math.abs(sw) * m.r / 2), 8, 720), pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = m.a0 + sw * i / n;
+    pts.push([+(m.cx + m.r * Math.cos(t)).toFixed(2), +(m.cy + m.r * Math.sin(t)).toFixed(2), 0.5]);
+  }
+  const it = { t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts };
+  if (prefs.dash) it.dash = true;
+  return it;
+}
+function compassGuide(ctx, m, k) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(47,93,80,.55)'; ctx.lineWidth = 1.2 / k; ctx.setLineDash([5 / k, 4 / k]);
+  if (m.r > 0) { ctx.beginPath(); ctx.arc(m.cx, m.cy, m.r, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.beginPath();
+  ctx.moveTo(m.cx - 6 / k, m.cy); ctx.lineTo(m.cx + 6 / k, m.cy); ctx.moveTo(m.cx, m.cy - 6 / k); ctx.lineTo(m.cx, m.cy + 6 / k);
+  ctx.strokeStyle = '#2f5d50'; ctx.lineWidth = 1.6 / k; ctx.stroke();
+  ctx.restore();
+}
+function compassMove(a) {
+  const m = a.cmp, ctx = a.ctx, k = a.k;
+  ctx.clearRect(0, 0, a.p.w, a.p.h);
+  if (m.mode === 'radius') {
+    m.r = Math.hypot(a.x - m.cx, a.y - m.cy);
+    compassGuide(ctx, m, k);
+    if (m.r * k > 4) {
+      ctx.save(); ctx.strokeStyle = '#2f5d50'; ctx.lineWidth = 1.6 / k;
+      ctx.beginPath(); ctx.moveTo(m.cx, m.cy); ctx.lineTo(a.x, a.y); ctx.stroke(); ctx.restore();
+      drawBadge(ctx, a.x, a.y, 'Radius ' + cmLen(m.r), k);
+    }
+    return;
+  }
+  const ang = Math.atan2(a.y - m.cy, a.x - m.cx);
+  let d = ang - m.last;
+  if (d > Math.PI) d -= 2 * Math.PI; else if (d < -Math.PI) d += 2 * Math.PI;
+  m.sweep = clamp(m.sweep + d, -2 * Math.PI, 2 * Math.PI); m.last = ang;
+  compassGuide(ctx, m, k);
+  const sw = compassSweep(m);
+  if (Math.abs(sw) * m.r * k > 2) {
+    drawStroke(ctx, compassArc(m, prefs.color, prefs.sizes.shape));
+    const end = m.a0 + sw;
+    drawBadge(ctx, m.cx + m.r * Math.cos(end), m.cy + m.r * Math.sin(end), Math.round(Math.abs(sw) * 180 / Math.PI) + '°', k);
+  }
+}
+function compassEnd(a) {
+  const m = a.cmp;
+  if (m.mode === 'radius') {
+    if (m.r * a.k > 6) { S.compass = { pid: a.p.id, cx: m.cx, cy: m.cy, r: m.r }; navigator.vibrate?.(10); }
+    renderCompass();
+    return;
+  }
+  if (Math.abs(compassSweep(m)) * m.r * a.k < 3) return;
+  const it = compassArc(m, prefs.color, prefs.sizes.shape);
+  a.p.items.push(it); drawAdded(a.pe, a.p, [it]); commit(a.p, a.before);
+}
+/* Zirkel sichtbar lassen (gestrichelter Kreis + Mittelpunkt), solange das Zirkel-Werkzeug aktiv ist */
+function renderCompass() {
+  document.querySelectorAll('.compass-ov').forEach(n => n.remove());
+  const c = S.compass;
+  if (!c || !S.note || prefs.tool !== 'shape' || prefs.shape !== 'compass') return;
+  const pe = pageEls.get(c.pid); if (!pe) return;
+  const sc = scale(), el = document.createElement('div');
+  el.className = 'compass-ov';
+  Object.assign(el.style, { left: (c.cx - c.r) * sc + 'px', top: (c.cy - c.r) * sc + 'px', width: 2 * c.r * sc + 'px', height: 2 * c.r * sc + 'px' });
+  el.innerHTML = '<i></i>';
+  pe.el.appendChild(el);
+}
 function shapeFromAct(a = act) {
   const base = { t: 'shape', id: uid(), color: prefs.color, size: prefs.sizes.shape };
   if (prefs.dash) base.dash = true;
@@ -1784,7 +1938,8 @@ function endAct(e) {
   if (act.tool === 'btnErase') { finishBtnPage(); act = null; return; }
   const a = act; act = null;
   const { p, pe, tool } = a;
-  clearTimeout(a.hold?.t);
+  clearTimeout(a.hold?.t); clearTimeout(a.lpT);
+  if (a.lp) { if (a.ctx) clearLive(pe); return; }       // langes Drücken: nur „Einfügen“ anbieten, nichts zeichnen
   const snapped = tool === 'marker' && snapRects(a);
   if (snapped) {
     addStrokes(pe, p, snapped); clearLive(pe); commit(p, a.before);
@@ -1805,6 +1960,10 @@ function endAct(e) {
     clearLive(pe);
     let len = 0; for (let i = 1; i < a.poly.length; i++) len += Math.hypot(a.poly[i][0] - a.poly[i - 1][0], a.poly[i][1] - a.poly[i - 1][1]);
     if (len * a.k < 12) tapSelect(p, a.x0, a.y0); else selectPoly(p, a.poly);
+  } else if (tool === 'shape' && a.cmp) {
+    clearLive(pe); compassEnd(a);
+  } else if (tool === 'stamp') {
+    clearLive(pe); if (e.type === 'pointerup') placeStamp(a);
   } else if (tool === 'shape') {
     clearLive(pe);
     if (Math.hypot(a.x - a.x0, a.y - a.y0) * a.k > 6) { p.items.push(shapeFromAct(a)); renderInk(pe, p); commit(p, a.before); }
@@ -1886,14 +2045,15 @@ function renderSel() {
   el.className = 'selbox' + (b.y * sc < 110 ? ' below' : '') + (b.x > p.w * 0.45 ? ' right' : '');
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
   const oneFormula = items.length === 1 && isFormula(items[0]);
-  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern"></div>`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern (Seitenverhältnis bleibt)"></div><div class="edge ew" title="Breite ändern"></div><div class="edge eh" title="Höhe ändern"></div>`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
     e.preventDefault(); hidePops();
-    const mode = e.target.classList.contains('handle') ? 'scale' : e.target.classList.contains('rot') ? 'rotate' : 'move';
+    const cl = e.target.classList;
+    const mode = cl.contains('handle') || cl.contains('edge') ? 'scale' : cl.contains('rot') ? 'rotate' : 'move';
     const orig = new Map(p.items.filter(i => ids.has(i.id)).map(i => [i.id, structuredClone(i)]));
-    startAct(mode, p, e, { orig });
+    startAct(mode, p, e, { orig, axis: cl.contains('ew') ? 'x' : cl.contains('eh') ? 'y' : null });
     if (mode === 'scale') { act.ax = b.x; act.ay = b.y; act.d0 = Math.max(1, Math.hypot(act.x0 - b.x, act.y0 - b.y)); }
     if (mode === 'rotate') { act.cx = b.x + b.w / 2; act.cy = b.y + b.h / 2; act.a0 = Math.atan2(act.y0 - act.cy, act.x0 - act.cx); }
     try { el.setPointerCapture(e.pointerId); } catch {}
@@ -1901,15 +2061,16 @@ function renderSel() {
   el.querySelector('.selbar').addEventListener('click', e => {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
     if (a === 'formula') openFormula(p, items[0]);
+    else if (a === 'stamp') saveSelAsStamp();
     else if (a === 'style') openStylePop(btn);
     else if (a === 'layer') showPop($('#layerPop'), btn);
     else selAction(a);
   });
   pageEls.get(p.id).el.appendChild(el);
 }
-function applySel(fn, k, da = 0) {
+function applySel(fn, k, da = 0, kx = k, ky = k) {
   const { p } = act;
-  p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k, da) : it);
+  p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k, da, kx, ky) : it);
   // Nur den Bereich neu zeichnen, wo die Auswahl war und jetzt ist
   const pe = act.pe, now = unionBox(p.items.filter(it => act.orig.has(it.id)).map(bbox));
   renderRegionSoon(pe, p, act.lastBox ? unionBox([act.lastBox, now]) : unionBox([now, ...[...act.orig.values()].map(bbox)]));
@@ -2220,6 +2381,124 @@ $('#mathDlg').addEventListener('click', e => {
 });
 $('#mathDlg').addEventListener('cancel', () => { mathCtx = null; });
 
+/* ---------------- Stempel ----------------
+   Werkzeug „Stempel“: auf die Seite tippen (oder ziehen und loslassen) setzt den gewählten Stempel.
+   Eingebaute Stempel werden aus normalen Elementen gebaut (Linien, Formen, Text) – sie lassen sich danach
+   wie alles andere radieren, verschieben, umfärben. Eigene Stempel: Lasso-Auswahl → „Als Stempel“. */
+const STAMPS = [
+  { id: 'check', label: '✓', title: 'Häkchen' }, { id: 'cross', label: '✗', title: 'Kreuz' },
+  { id: 'star', label: '★', title: 'Stern' }, { id: 'smile', label: '☺', title: 'Lächeln' },
+  { id: 'sad', label: '☹', title: 'Traurig' }, { id: 'date', label: 'Datum', title: 'Heutiges Datum' },
+  { id: 'done', label: 'Erledigt', title: 'Erledigt-Stempel' }
+];
+const stampLine = (pts, color, size) => ({ t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts: pts.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) });
+const arcPts = (cx, cy, r, a0, a1, n = 24) => Array.from({ length: n + 1 }, (_, i) => { const t = a0 + (a1 - a0) * i / n; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; });
+/* Elemente eines Stempels, Mitte bei (0,0), Höhe etwa s */
+function stampItems(id, s, color) {
+  const lw = Math.max(1.2, s * 0.09), sc = pts => pts.map(([x, y]) => [x * s, y * s]);
+  const deg = Math.PI / 180;
+  if (id === 'check') return [stampLine(sc([[-0.42, 0.02], [-0.12, 0.32], [0.45, -0.38]]), color, lw)];
+  if (id === 'cross') return [stampLine(sc([[-0.35, -0.35], [0.35, 0.35]]), color, lw), stampLine(sc([[0.35, -0.35], [-0.35, 0.35]]), color, lw)];
+  if (id === 'star') {
+    const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 0.21 : 0.52, a = -Math.PI / 2 + i * Math.PI / 5; pts.push([+(r * s * Math.cos(a)).toFixed(2), +(r * s * Math.sin(a) + s * 0.04).toFixed(2)]); }
+    return [{ t: 'shape', id: uid(), kind: 'poly', pts, color, size: Math.max(1, s * 0.04), fill: fillFor(color, 2), fillMode: 2 }];
+  }
+  if (id === 'smile' || id === 'sad') {
+    const face = { t: 'shape', id: uid(), kind: 'ellipse', x1: -s / 2, y1: -s / 2, x2: s / 2, y2: s / 2, color, size: Math.max(1, s * 0.06) };
+    const eye = x => stampLine([[x * s, -0.13 * s]], color, s * 0.12);
+    const mouth = id === 'smile' ? arcPts(0, 0.0 * s, 0.27 * s, 25 * deg, 155 * deg) : arcPts(0, 0.4 * s, 0.27 * s, 205 * deg, 335 * deg);
+    return [face, eye(-0.17), eye(0.17), stampLine(mouth, color, Math.max(1, s * 0.07))];
+  }
+  const fs = s * 0.55, text = id === 'date' ? new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Erledigt';
+  // Textbreite genau messen, damit Rahmen und Mitte stimmen
+  const mc = (stampItems.mc ||= document.createElement('canvas').getContext('2d'));
+  mc.font = `700 ${fs}px ${FONT}`;
+  const tw = mc.measureText(text).width, h = fs * 1.35;
+  const t = { t: 'text', id: uid(), x: -tw / 2, y: -h / 2, w: tw + fs * 0.3, text, size: +fs.toFixed(1), color, bold: true };
+  if (id === 'date') return [t];
+  const bw = tw / 2 + fs * 0.4;
+  return [{ t: 'shape', id: uid(), kind: 'rect', x1: -bw, y1: -h / 2 - fs * 0.1, x2: bw, y2: h / 2 + fs * 0.1, color, size: Math.max(1, fs * 0.1) }, t];
+}
+const customStamps = () => { try { return JSON.parse(localStorage.getItem('notizbuch.stamps')) || []; } catch { return []; } };
+function saveCustomStamps(list) {
+  try { localStorage.setItem('notizbuch.stamps', JSON.stringify(list)); return true; }
+  catch { toast('Zu wenig Platz für weitere eigene Stempel. Lösche einen alten Stempel (×).'); return false; }
+}
+/* Stempel an (x, y) als neue Elemente */
+function stampAt(x, y) {
+  const sel = prefs.stamp || 'check';
+  let items;
+  if (sel.startsWith('c:')) {
+    const cs = customStamps().find(c => c.id === sel.slice(2)); if (!cs) return [];
+    items = cs.items.map(i => ({ ...i, id: uid() }));
+  } else items = stampItems(sel, prefs.sizes.stamp || 32, prefs.color);
+  return items.map(i => ({ ...xform(i, (a, b) => [a + x, b + y], 1), id: i.id }));
+}
+function stampPreview(a) {
+  const ctx = a.ctx; ctx.clearRect(0, 0, a.p.w, a.p.h);
+  ctx.save(); ctx.globalAlpha = 0.55; drawItems(ctx, stampAt(a.x, a.y)); ctx.restore();
+}
+function placeStamp(a) {
+  const items = stampAt(a.x, a.y); if (!items.length) return;
+  a.p.items.push(...items);
+  if (items.some(i => i.t === 'text')) refreshPage(a.p); else drawAdded(a.pe, a.p, items);
+  commit(a.p, a.before);
+  navigator.vibrate?.(8);
+}
+/* Lasso-Auswahl als eigenen Stempel speichern (Mitte = Mitte der Auswahl) */
+function saveSelAsStamp() {
+  if (!S.sel) return;
+  const items = S.sel.p.items.filter(i => S.sel.ids.has(i.id)); if (!items.length) return;
+  const b = unionBox(items.map(bbox)), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const list = customStamps();
+  if (list.length >= 12) return toast('Es gibt schon 12 eigene Stempel. Lösche zuerst einen (×).');
+  const id = uid();
+  list.push({ id, items: items.map(i => xform(i, (a, c) => [a - cx, c - cy], 1)) });
+  if (!saveCustomStamps(list)) return;
+  prefs.stamp = 'c:' + id; savePrefs();
+  toast('Als Stempel gespeichert. Zu finden beim Stempel-Werkzeug.');
+}
+function stampThumb(items) {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 48;
+  const b = unionBox(items.map(bbox)), k = Math.min(56 / Math.max(1, b.w), 40 / Math.max(1, b.h));
+  const ctx = c.getContext('2d'); ctx.setTransform(k, 0, 0, k, 32 - (b.x + b.w / 2) * k, 24 - (b.y + b.h / 2) * k);
+  drawItems(ctx, items, () => {});
+  return c;
+}
+function buildStampPop() {
+  const box = $('#stampGrid'); box.innerHTML = '';
+  for (const s of STAMPS) {
+    const b = document.createElement('button');
+    b.dataset.stamp = s.id; b.title = s.title; b.textContent = s.label;
+    if (s.label.length > 1) b.classList.add('word');
+    box.appendChild(b);
+  }
+  for (const cs of customStamps()) {
+    const b = document.createElement('button');
+    b.dataset.stamp = 'c:' + cs.id; b.title = 'Eigener Stempel'; b.className = 'custom';
+    b.appendChild(stampThumb(cs.items));
+    const x = document.createElement('span'); x.className = 'del'; x.textContent = '×'; x.title = 'Stempel löschen'; x.dataset.del = cs.id;
+    b.appendChild(x); box.appendChild(b);
+  }
+  box.querySelectorAll('[data-stamp]').forEach(b => b.classList.toggle('active', b.dataset.stamp === (prefs.stamp || 'check')));
+  $('#stampHint').hidden = customStamps().length > 0;
+}
+function stampLabel() {
+  const sel = prefs.stamp || 'check';
+  if (sel.startsWith('c:')) return 'Eigener ▾';
+  return (STAMPS.find(s => s.id === sel)?.label || '✓') + ' ▾';
+}
+$('#stampPop').addEventListener('click', e => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    saveCustomStamps(customStamps().filter(c => c.id !== del.dataset.del));
+    if (prefs.stamp === 'c:' + del.dataset.del) prefs.stamp = 'check';
+    savePrefs(); buildStampPop(); updToolbar(); return;
+  }
+  const b = e.target.closest('[data-stamp]'); if (!b) return;
+  prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
+});
+
 /* ---------------- Werkzeugleiste ---------------- */
 function buildSwatches() {
   const box = $('#swatches'); box.innerHTML = '';
@@ -2229,9 +2508,9 @@ function buildSwatches() {
     box.appendChild(b);
   }
 }
-const dotPx = (t, v) => clamp(v * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 : 2), 3, 24);
+const dotPx = (t, v) => clamp(v * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 : t === 'stamp' ? 0.35 : 2), 3, 24);
 /* Drei Schnellwahl-Stärken pro Werkzeug; langes Drücken speichert die aktuelle Stärke */
-const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5] };
+const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5], stamp: [20, 32, 52] };
 const presetsFor = t => (prefs.presets && prefs.presets[t]) || PRESETS[t];
 function updToolbar() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool));
@@ -2255,6 +2534,10 @@ function updToolbar() {
   $('#optSmooth').value = String(prefs.smoothing ?? 0);
   $('#eraserModes').hidden = t !== 'eraser';
   $('#shapeKinds').hidden = t !== 'shape';
+  $('#btnFill').hidden = prefs.shape === 'compass';
+  $('#stampBox').hidden = t !== 'stamp';
+  $('#btnStamp').textContent = stampLabel();
+  if (S.note) renderCompass();
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
   $('#btnSnap').hidden = t !== 'marker';
@@ -2264,7 +2547,9 @@ function updToolbar() {
   const tr = Math.round((1 - (prefs.markerAlpha ?? 0.4)) * 100);
   $('#alphaRange').value = tr; $('#alphaVal').textContent = '◐ ' + tr + ' %'; $('#alphaPopVal').textContent = tr + ' %';
   Object.assign($('#alphaDemo').style, { background: prefs.color, opacity: prefs.markerAlpha ?? 0.4 });
-  $('#btnFill').textContent = 'Füllung: ' + ['aus', 'hell', 'voll'][prefs.fill || 0];
+  const fm = prefs.fill || 0;
+  $('#btnFill').innerHTML = `<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor" fill-opacity="${[0, 0.3, 1][fm]}" stroke="currentColor" stroke-width="2"/></svg>`;
+  $('#btnFill').title = 'Füllung: ' + ['aus', 'hell', 'voll'][fm] + ' (tippen zum Wechseln)';
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
   $('#optScribble').checked = prefs.scribble !== false;
@@ -2319,7 +2604,10 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
-  else if (b.dataset.shape) { prefs.shape = b.dataset.shape; savePrefs(); updToolbar(); }
+  else if (b.dataset.shape) {
+    prefs.shape = b.dataset.shape; savePrefs(); updToolbar();
+    if (prefs.shape === 'compass' && !S.compass) toast('Zirkel: Spitze auf den Mittelpunkt setzen und nach außen ziehen. Danach am Kreis ansetzen und herumfahren.', 5000);
+  }
   else if (b.dataset.emode) { prefs.emode = b.dataset.emode; savePrefs(); updToolbar(); }
   else if (b.dataset.preset) {
     if (presetSaved) { presetSaved = false; return; }
@@ -2327,6 +2615,7 @@ $('#toolbar').addEventListener('click', e => {
   }
   else if (b.id === 'btnBold') { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing(); }
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
+  else if (b.id === 'btnStamp') { buildStampPop(); showPop($('#stampPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
@@ -2981,7 +3270,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 34;
+const APP_VERSION = 35;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
