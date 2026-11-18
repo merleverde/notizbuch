@@ -107,6 +107,10 @@
       <button id="btnRuler" title="Lineal: jeder Strich wird eine gerade Linie">Lineal</button>
       <button id="btnSnap" title="Textmarker rastet auf PDF-Seiten an den Textzeilen ein">Text einrasten</button>
     </div>
+    <div id="markerBox" class="seg marker-box" hidden>
+      <button id="btnBehind" title="Neue Markierungen unter die Schrift legen, damit sie gut lesbar bleibt">Hinter Schrift</button>
+      <button id="btnAlpha" title="Transparenz des Textmarkers einstellen"><span id="alphaVal"></span></button>
+    </div>
     <div id="eraserModes" class="seg" hidden>
       <button data-emode="area" title="Nur den Bereich unter dem Radierer löschen">Bereich</button>
       <button data-emode="stroke" title="Ganze Striche löschen">Ganze Striche</button>
@@ -178,6 +182,12 @@
   </div>
 </section>
 
+<div id="alphaPop" class="popover alpha-pop" hidden aria-label="Transparenz des Textmarkers">
+  <div class="alpha-head">Transparenz <b id="alphaPopVal"></b></div>
+  <input type="range" id="alphaRange" min="20" max="85" step="5" aria-label="Transparenz des Textmarkers">
+  <div class="alpha-scale"><span>kräftig</span><span>durchscheinend</span></div>
+  <div class="alpha-demo"><span>Beispieltext</span><i id="alphaDemo"></i></div>
+</div>
 <div id="penPop" class="popover pen-pop" hidden aria-label="Stiftart">
   <button data-pstyle="fountain"><b>Füller</b><span>Druck macht breiter und dunkler</span></button>
   <button data-pstyle="ball"><b>Kugelschreiber</b><span>Gleichmäßig breit, Druck macht dunkler</span></button>

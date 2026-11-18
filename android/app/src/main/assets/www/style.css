@@ -195,6 +195,14 @@ button { cursor: pointer; }
 .size-dot { width: 24px; height: 24px; display: grid; place-items: center; }
 .size-dot::after { content: ""; width: var(--d, 6px); height: var(--d, 6px); max-width: 24px; max-height: 24px; border-radius: 50%; background: var(--fg); }
 #sizeRange { width: 120px; accent-color: var(--accent); }
+#alphaVal { font-variant-numeric: tabular-nums; }
+.alpha-pop { width: 260px; padding: 14px 16px; }
+.alpha-head { display: flex; justify-content: space-between; font-size: .9rem; margin-bottom: 8px; }
+#alphaRange { width: 100%; accent-color: var(--accent); }
+.alpha-scale { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted, #6b7280); }
+.alpha-demo { position: relative; margin-top: 12px; padding: 6px 4px; font-size: 1.05rem; }
+.alpha-demo span { position: relative; z-index: 1; color: var(--fg); }
+.alpha-demo i { position: absolute; left: 0; right: 0; top: 4px; bottom: 4px; border-radius: 2px; }
 .seg { display: flex; gap: 2px; flex: none; background: var(--surface-2); border-radius: 10px; padding: 3px; }
 .seg button { border: 0; background: transparent; border-radius: 8px; min-width: 36px; height: 34px; display: grid; place-items: center; padding: 0 8px; font-size: .85rem; white-space: nowrap; }
 .seg button svg { width: 20px; height: 20px; }

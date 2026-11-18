@@ -252,7 +252,7 @@ function drawStroke(ctx, it) {
     ctx.stroke();
   } else if (it.tool === 'marker' || it.tool === 'cover') {
     // Textmarker halbtransparent; Abdecken = deckend in Papierweiß
-    ctx.globalAlpha = it.tool === 'marker' ? 0.38 : 1; ctx.lineWidth = it.size;
+    ctx.globalAlpha = it.tool === 'marker' ? (it.alpha ?? 0.38) : 1; ctx.lineWidth = it.size;
     if (it.cap) ctx.lineCap = it.cap;                  // an Text eingerastete Markierungen enden gerade
     ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
     if (n === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
@@ -1335,6 +1335,7 @@ function startAct(tool, p, e, extra = {}) {
   } else if (tool === 'pen' || tool === 'marker') {
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
     if (tool === 'pen') act.item.style = prefs.penStyle;
+    else act.item.alpha = prefs.markerAlpha ?? 0.4;
     // Textmarker auf PDF-Seiten: Textzeilen laden, damit der Strich an ihnen einrasten kann
     if (tool === 'marker' && prefs.snapText !== false && p.pdf != null && S.pdf) {
       const a = act; pdfLines(p).then(l => { a.lines = l; }).catch(() => {});
@@ -1657,7 +1658,7 @@ function moveAct(e) {
   // Seitentaste erst während des Schreibens gedrückt → ab hier radieren
   if ((act.tool === 'pen' || act.tool === 'marker') && penButton(e)) {
     clearTimeout(act.hold?.t);
-    if (act.item.pts.length && !act.recog) { act.p.items.push(act.item); renderInk(act.pe, act.p); }
+    if (act.item.pts.length && !act.recog) addStrokes(act.pe, act.p, [act.item]);
     act.tool = 'eraser'; act.recog = null;
     if (prefs.emode === 'cover') {
       act.tool = 'cover';
@@ -1709,6 +1710,26 @@ function shapeFromAct(a = act) {
   }
   return { ...base, kind: prefs.shape, x1: a.x0, y1: a.y0, x2: a.x, y2: a.y };
 }
+/* Neue Striche einfügen. Textmarker landen (Einstellung „Hinter Schrift“, Standard an) unter der Schrift,
+   die sie überdecken: direkt über dem obersten überlappenden Element, das keine Schrift ist
+   (Foto, Abdecken, anderer Marker). So bleiben Fotos und Abdeck-Weiß weiterhin darunter. */
+const isInk = it => it.t === 'text' || it.t === 'shape' || (it.t === 'stroke' && it.tool === 'pen');
+function addStrokes(pe, p, items) {
+  if (!items.length) return;
+  if (items[0].tool !== 'marker' || prefs.markerBehind === false) { p.items.push(...items); drawAdded(pe, p, items); return; }
+  const b = unionBox(items.map(bbox));
+  let i = p.items.length;
+  while (i > 0) {
+    const o = p.items[i - 1];
+    if (!isInk(o) && overlaps(bbox(o), b)) break;
+    i--;
+  }
+  // dann direkt unter die erste überdeckte Schrift (nicht weiter nach unten als nötig)
+  while (i < p.items.length && !(isInk(p.items[i]) && overlaps(bbox(p.items[i]), b))) i++;
+  if (i === p.items.length) { p.items.push(...items); drawAdded(pe, p, items); return; }
+  p.items.splice(i, 0, ...items);
+  if (pe.visible) renderRegion(pe, p, b);
+}
 function endAct(e) {
   if (act.tool === 'btnErase') { finishBtnPage(); act = null; return; }
   const a = act; act = null;
@@ -1716,18 +1737,17 @@ function endAct(e) {
   clearTimeout(a.hold?.t);
   const snapped = tool === 'marker' && snapRects(a);
   if (snapped) {
-    p.items.push(...snapped);
-    drawAdded(pe, p, snapped); clearLive(pe); commit(p, a.before);
+    addStrokes(pe, p, snapped); clearLive(pe); commit(p, a.before);
   } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
     const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
     const it = tiny ? null : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
-    if (it) { p.items.push(it); drawAdded(pe, p, [it]); }
+    if (it) addStrokes(pe, p, [it]);
     clearLive(pe); commit(p, a.before);
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
     smoothStroke(a);
     if (tool === 'pen' && scribbleErase(a)) renderInk(pe, p);      // Kritzeln hat gelöscht: Seite neu zeichnen
-    else if (a.item.pts.length) { p.items.push(a.item); drawAdded(pe, p, [a.item]); }
+    else if (a.item.pts.length) addStrokes(pe, p, [a.item]);
     clearLive(pe); commit(p, a.before);
   } else if (tool === 'eraser') {
     clearLive(pe); if (a.changed) commit(p, a.before);
@@ -2042,6 +2062,11 @@ function updToolbar() {
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
   $('#btnSnap').hidden = t !== 'marker';
   $('#btnSnap').classList.toggle('active', prefs.snapText !== false);
+  $('#markerBox').hidden = t !== 'marker';
+  $('#btnBehind').classList.toggle('active', prefs.markerBehind !== false);
+  const tr = Math.round((1 - (prefs.markerAlpha ?? 0.4)) * 100);
+  $('#alphaRange').value = tr; $('#alphaVal').textContent = '◐ ' + tr + ' %'; $('#alphaPopVal').textContent = tr + ' %';
+  Object.assign($('#alphaDemo').style, { background: prefs.color, opacity: prefs.markerAlpha ?? 0.4 });
   $('#btnFill').textContent = 'Füllung: ' + ['aus', 'hell', 'voll'][prefs.fill || 0];
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
@@ -2086,6 +2111,8 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.dataset.color) setColor(b.dataset.color);
   else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnAlpha') showPop($('#alphaPop'), b);
+  else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
   else if (b.dataset.shape) { prefs.shape = b.dataset.shape; savePrefs(); updToolbar(); }
@@ -2114,6 +2141,7 @@ for (const t of ['pointerup', 'pointerleave', 'pointercancel']) $('#sizePresets'
 $('#sizePresets').addEventListener('contextmenu', e => e.preventDefault());
 $('#customColor').addEventListener('input', e => setColor(e.target.value));
 $('#sizeRange').addEventListener('input', e => { prefs.sizes[prefs.tool] = +e.target.value; savePrefs(); updToolbar(); });
+$('#alphaRange').addEventListener('input', e => { prefs.markerAlpha = +(1 - e.target.value / 100).toFixed(2); savePrefs(); updToolbar(); });
 $('#textSize').addEventListener('change', e => { prefs.textSize = +e.target.value; savePrefs(); styleEditing(); });
 $('#fileImg').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
@@ -2748,7 +2776,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 31;
+const APP_VERSION = 32;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
