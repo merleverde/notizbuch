@@ -1116,12 +1116,40 @@ let saving = null;
 function saveToFile(pickNew = false, suggest = null) {
   if (saving) return saving.then(() => pickNew ? saveToFile(true, suggest) : !S.fileDirty || saveToFile(false));
   saving = doSave(pickNew, suggest).finally(() => { saving = null; });
-  return saving;
+  return saving.then(r => r === 'perm' ? permFix() : r);
+}
+const isPermErr = e => e?.name === 'NotAllowedError' || /permission denial|securityexception|not exported|permission/i.test(String(e && e.message));
+/* Dialog mit Knöpfen data-<key>="…" öffnen; liefert den Wert des gewählten Knopfs ('cancel' bei Zurück) */
+function dialogChoice(dlg, key) {
+  return new Promise(res => {
+    const done = v => { dlg.removeEventListener('click', onClick); dlg.removeEventListener('cancel', onCancel); if (dlg.open) dlg.close(); res(v); };
+    const onClick = e => { const b = e.target.closest(`[data-${key}]`); if (b) done(b.dataset[key]); };
+    const onCancel = () => done('cancel');
+    dlg.addEventListener('click', onClick); dlg.addEventListener('cancel', onCancel);
+    dlg.showModal();
+  });
+}
+/* Originaldatei nicht mehr beschreibbar: dieselbe Datei über die Dateiauswahl neu wählen lassen.
+   Über die Dateiauswahl bekommt die App eine dauerhafte Erlaubnis und überschreibt dann direkt das Original. */
+async function permFix() {
+  const name = S.handle?.name || pdfName();
+  $('#permMsg').textContent = `Die App darf „${name}“ gerade nicht mehr überschreiben. Das passiert bei Dateien, die über „Öffnen mit“ aus einer anderen App (z. B. Nextcloud) kamen, sobald die Notizbuch-App neu gestartet oder aktualisiert wurde. Deine Notiz ist sicher in der App gespeichert. ` +
+    `Tippe auf „Original auswählen …“ und wähle dieselbe Datei noch einmal aus – danach speichert die App dauerhaft direkt hinein.`;
+  const choice = await dialogChoice($('#permDlg'), 'p');
+  if (choice === 'new') return saveToFile(true, name);
+  if (choice !== 'pick') return false;
+  let h;
+  try { [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'], 'application/octet-stream': ['.pdf'] } }] }); }
+  catch { return false; }
+  if (h.name !== name) { toast(`Du hast „${h.name}“ gewählt, nicht „${name}“. Zum Überschreiben bitte genau die Originaldatei wählen.`, 7000); return false; }
+  if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') { toast('Diese Datei darf die App nur lesen. Wähle „Als neue Datei …“.', 6000); return false; }
+  S.handle = h; await dbPut('handles', { id: S.note.id, handle: h });
+  return saveToFile(false);
 }
 async function doSave(pickNew, suggest) {
   commitText();
   const btn = $('#btnSave'); btn.disabled = true;
-  let created = null, lock = null;
+  let created = null, lock = null, h = null;
   // Die PDF schon erzeugen, während der Speicherdialog offen ist: so liegt keine halb angelegte Datei herum
   const bytesP = buildPdf().then(checkPdf);
   bytesP.catch(() => {});
@@ -1132,7 +1160,7 @@ async function doSave(pickNew, suggest) {
       toast('PDF wurde heruntergeladen.');
       return true;
     }
-    let h = pickNew ? null : S.handle;
+    h = pickNew ? null : S.handle;
     if (!h) {
       const name = suggest || (S.handle ? pdfName().replace(/\.pdf$/, ' (bearbeitet).pdf') : pdfName());
       h = created = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
@@ -1150,7 +1178,7 @@ async function doSave(pickNew, suggest) {
     // Bildschirm während des Speicherns wach halten (erst nach dem Dialog, der braucht den frischen Fingertipp)
     try { lock = await navigator.wakeLock?.request('screen'); } catch {}
     if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await h.requestPermission({ mode: 'readwrite' })) !== 'granted')
-      throw new Error('Die App darf die Datei nicht überschreiben.');
+      throw Object.assign(new Error('Die App darf die Datei nicht überschreiben.'), { name: 'NotAllowedError' });
     $('#saveState').textContent = 'Speichert … bitte die App nicht verlassen';
     const bytes = await bytesP;
     const w = await h.createWritable();
@@ -1177,6 +1205,9 @@ async function doSave(pickNew, suggest) {
   } catch (e) {
     // Eine gerade erst angelegte, leere Datei wieder entfernen
     if (created) { try { await created.remove?.(); } catch {} }
+    // Schreiberlaubnis für die Originaldatei abgelaufen (typisch nach „Öffnen mit“ aus Nextcloud + App-Neustart):
+    // nicht als Fehler melden, sondern anbieten, die Datei neu auszuwählen (siehe permFix)
+    if (!created && h && h === S.handle && isPermErr(e)) return 'perm';
     if (e.name !== 'AbortError') toast('Speichern fehlgeschlagen: ' + e.message + (created ? ' Falls eine leere Datei entstanden ist, kannst du sie löschen.' : ''), 8000);
     return false;
   } finally {
@@ -1726,7 +1757,8 @@ function drawEraser(x, y) {
    Farbe und Strichstärke werden vorher eingestellt; alles, was der Stift berührt, übernimmt sie.
    Schalter „Farbe“ / „Stärke“ legen fest, was übertragen wird. Fotos und Abdecken bleiben unverändert. */
 function restyleItem(it) {
-  const col = prefs.rsColor !== false ? prefs.color : null, w = prefs.rsWidth !== false ? prefs.sizes.restyle : null;
+  // Farbe und Stärke werden immer zusammen übertragen (Wunsch: ein Zug ändert beides)
+  const col = prefs.color, w = prefs.sizes.restyle;
   if (it.t === 'img' && !isFormula(it)) return null;
   if (it.tool === 'cover') return null;
   const c = { ...it };
@@ -1743,7 +1775,7 @@ function restyleItem(it) {
   return c.color !== it.color || c.size !== it.size ? c : null;
 }
 function restyleAt(x, y) {
-  const p = act.p, r = 7 / act.k;
+  const p = act.p, r = 3.5 / act.k;                       // feine Spitze (Radius 3,5 Bildschirm-Pixel)
   const lx = act.ex ?? x, ly = act.ey ?? y, steps = Math.max(1, Math.ceil(Math.hypot(x - lx, y - ly) / (r * 0.7)));
   act.ex = x; act.ey = y;
   // Spur des Zauberstifts andeuten
@@ -2643,9 +2675,6 @@ function updToolbar() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool || (b.dataset.tool === 'lasso' && prefs.tool === 'restyle')));
   $('#lassoModes').hidden = prefs.tool !== 'lasso' && prefs.tool !== 'restyle';
   document.querySelectorAll('[data-lmode]').forEach(b => b.classList.toggle('active', b.dataset.lmode === prefs.tool));
-  $('#restyleBox').hidden = prefs.tool !== 'restyle';
-  $('#btnRsColor').classList.toggle('active', prefs.rsColor !== false);
-  $('#btnRsWidth').classList.toggle('active', prefs.rsWidth !== false);
   document.querySelectorAll('.swatch').forEach(b => b.classList.toggle('active', b.dataset.color === prefs.color));
   const t = prefs.tool, sizeTool = SIZE_RANGE[t] ? t : null;
   $('#sizeBox').hidden = !sizeTool;
@@ -2745,12 +2774,6 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.dataset.lmode) {
     setTool(b.dataset.lmode);
     if (b.dataset.lmode === 'restyle' && !prefs.rsHint) { prefs.rsHint = true; savePrefs(); toast('Zauberstift: Farbe und Stärke wählen, dann über Striche, Formen oder Text fahren – sie übernehmen den Stil.', 5500); }
-  }
-  else if (b.id === 'btnRsColor' || b.id === 'btnRsWidth') {
-    const key = b.id === 'btnRsColor' ? 'rsColor' : 'rsWidth', other = key === 'rsColor' ? 'rsWidth' : 'rsColor';
-    prefs[key] = prefs[key] === false;
-    if (prefs[key] === false && prefs[other] === false) prefs[other] = true;   // eines von beiden bleibt immer an
-    savePrefs(); updToolbar();
   }
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
@@ -3421,7 +3444,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 40;
+const APP_VERSION = 41;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
