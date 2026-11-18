@@ -59,6 +59,15 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+/* Update verfügbar: auffälliger Knopf in der Kopfzeile, bleibt sichtbar bis installiert */
+.upd-badge {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 10px;
+  border: 0; border-radius: 18px; background: #e8590c; color: #fff; font-weight: 700; font-size: .9rem; white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(232, 89, 12, .35); animation: updPulse 2.4s ease-in-out 3;
+}
+.upd-badge[hidden] { display: none; }
+.upd-badge::before { content: "↓"; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,.25); font-size: .85rem; }
+@keyframes updPulse { 50% { transform: scale(1.06); box-shadow: 0 2px 14px rgba(232, 89, 12, .6); } }
 .btn:active { transform: translateY(1px); }
 .icon-btn {
   width: 40px; height: 40px; flex: none;

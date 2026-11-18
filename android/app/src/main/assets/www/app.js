@@ -3362,7 +3362,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 38;
+const APP_VERSION = 39;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -3380,18 +3380,29 @@ async function checkForUpdates(manual) {
   if (manual) toast('Suche nach Updates …', 2000);
   try {
     let src = UPDATE_INFO; try { src = localStorage.getItem('notizbuch.updateUrl') || UPDATE_INFO; } catch {}   // nur zum Testen änderbar
-    const info = await window.NATIVE_APP.checkUpdate(src);
+    // GitHub Pages hält version.json bis zu 10 Minuten im Zwischenspeicher – der Zusatz ?t=… holt immer den neuesten Stand
+    const info = await window.NATIVE_APP.checkUpdate(src + (src.includes('?') ? '&' : '?') + 't=' + Date.now());
     info.base = src;
     try { localStorage.setItem('notizbuch.updateChecked', String(Date.now())); } catch {}
     if (+info.versionCode > window.NATIVE_APP.versionCode) {
       updateInfo = info;
-      $('#updateMsg').textContent = `Version ${info.versionName} ist verfügbar (installiert: ${window.NATIVE_APP.version}). Deine Notizen bleiben beim Aktualisieren erhalten.`;
-      $('#updateDlg').showModal();
+      showUpdBadge();
+      // Fenster von selbst nur einmal pro App-Start; der orange Knopf oben bleibt sichtbar
+      if (manual || !updateLater) openUpdateDlg();
     } else if (manual) toast(`Du hast die neueste Version (${window.NATIVE_APP.version}).`, 3000);
   } catch (e) {
     if (manual) toast('Keine Verbindung zur Update-Seite. Bitte später nochmal versuchen.', 4000);
   }
 }
+function showUpdBadge() {
+  document.querySelectorAll('.upd-badge').forEach(b => { b.hidden = false; b.textContent = 'Update ' + updateInfo.versionName; });
+}
+function openUpdateDlg() {
+  if (!updateInfo || $('#updateDlg').open) return;
+  $('#updateMsg').textContent = `Version ${updateInfo.versionName} ist verfügbar (installiert: ${window.NATIVE_APP.version}). Deine Notizen bleiben beim Aktualisieren erhalten.`;
+  $('#updateDlg').showModal();
+}
+document.querySelectorAll('.upd-badge').forEach(b => b.addEventListener('click', () => { commitText(); hidePops(); openUpdateDlg(); }));
 $('#updateDlg').addEventListener('cancel', () => { updateLater = true; });   // Zurück-Taste = „Später“
 $('#updateDlg').addEventListener('click', async e => {
   const u = e.target.closest('[data-u]')?.dataset.u; if (!u) return;
@@ -3413,17 +3424,18 @@ window.nativeUpdateFailed = msg => toast('Update nicht installiert: ' + msg, 600
 $('#btnUpdate').addEventListener('click', () => { hidePops(); checkForUpdates(true); });
 $('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? showPop($('#settingsPop'), e.currentTarget) : hidePops());
 $('#settingsPop').addEventListener('click', e => { if (e.target.closest('[data-s="update"]')) { hidePops(); checkForUpdates(true); } });
-// Updates von selbst vorschlagen: beim Start und beim Zurückwechseln in die App (höchstens einmal pro Stunde).
-// „Später“ gilt bis zum nächsten Start der App. Während gerade geschrieben wird, wartet der Vorschlag.
+// Updates von selbst suchen: beim Start und bei jedem Zurückwechseln in die App (höchstens alle 2 Minuten).
+// Gefunden → oranger Knopf „Update x.y“ oben (bleibt), dazu einmal pro App-Start das Hinweisfenster.
+// „Später“ schließt nur das Fenster. Während gerade geschrieben wird, wartet die Prüfung.
 let updateLater = false, lastAutoCheck = 0;
 function autoCheckUpdates() {
-  if (!NATIVE || updateLater || Date.now() - lastAutoCheck < 3600e3) return;
+  if (!NATIVE || Date.now() - lastAutoCheck < 120e3) return;
   if (act || S.editing || saving || document.querySelector('dialog[open]')) { setTimeout(autoCheckUpdates, 20000); return; }
   lastAutoCheck = Date.now();
   checkForUpdates(false);
 }
 if (NATIVE) {
-  setTimeout(autoCheckUpdates, 3000);
+  setTimeout(autoCheckUpdates, 1500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(autoCheckUpdates, 1500); });
 }
 
