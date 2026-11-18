@@ -15,7 +15,7 @@ const revive = h => (window.reviveHandle ? window.reviveHandle(h) : h);
 const A4 = [595.28, 841.89];
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 const COLORS = ['#1b1f24', '#1f4fd1', '#d0312d', '#1e8e4f', '#ef8a00', '#8a3fc2', '#ffd21f'];
-const SIZE_RANGE = { pen: [0.5, 10, 0.5], marker: [4, 40, 1], eraser: [6, 60, 2], shape: [0.5, 10, 0.5], stamp: [12, 90, 2] };
+const SIZE_RANGE = { pen: [0.5, 10, 0.5], marker: [4, 40, 1], eraser: [6, 60, 2], shape: [0.5, 10, 0.5], stamp: [12, 90, 2], restyle: [0.5, 10, 0.5] };
 const DATA_NAME = 'notizbuch.json';
 const ORIG_NAME = 'notizbuch-original.pdf';
 
@@ -25,7 +25,7 @@ const prefs = Object.assign({
   penStyle: 'fountain', smoothing: 0, shape: 'rect', emode: 'area', textSize: 16, bold: false, finger: false, editable: true, folders: []
 }, (() => { try { return JSON.parse(localStorage.getItem('notizbuch.prefs')) || {}; } catch { return {}; } })());
 // neue Werkzeuge bekommen ihre Standardgröße auch bei schon gespeicherten Einstellungen
-prefs.sizes = { pen: 2, marker: 14, eraser: 20, shape: 2, stamp: 32, ...prefs.sizes };
+prefs.sizes = { pen: 2, marker: 14, eraser: 20, shape: 2, stamp: 32, restyle: 2.5, ...prefs.sizes };
 function savePrefs() { try { localStorage.setItem('notizbuch.prefs', JSON.stringify(prefs)); } catch {} }
 
 /* ---------------- IndexedDB ---------------- */
@@ -1419,6 +1419,7 @@ function startAct(tool, p, e, extra = {}) {
   }
   if (tool === 'shape' && prefs.shape === 'compass') { compassStart(act); return; }
   if (tool === 'stamp') { stampPreview(act); return; }
+  if (tool === 'restyle') { act.done = new Set(); restyleAt(x, y); return; }
   if (tool === 'eraser' && prefs.emode === 'cover') {
     act.tool = 'cover';
     act.item = { t: 'stroke', id: uid(), tool: 'cover', color: coverColor(act.p), size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
@@ -1721,6 +1722,48 @@ function drawEraser(x, y) {
   ctx.save(); ctx.strokeStyle = '#2f5d50'; ctx.lineWidth = 1.2 / act.k; ctx.fillStyle = 'rgba(47,93,80,.08)';
   ctx.beginPath(); ctx.arc(x, y, prefs.sizes.eraser / 2 / act.k, 0, 7); ctx.fill(); ctx.stroke(); ctx.restore();
 }
+/* ---------------- Zauberstift (Stil ändern durch Überfahren) ----------------
+   Farbe und Strichstärke werden vorher eingestellt; alles, was der Stift berührt, übernimmt sie.
+   Schalter „Farbe“ / „Stärke“ legen fest, was übertragen wird. Fotos und Abdecken bleiben unverändert. */
+function restyleItem(it) {
+  const col = prefs.rsColor !== false ? prefs.color : null, w = prefs.rsWidth !== false ? prefs.sizes.restyle : null;
+  if (it.t === 'img' && !isFormula(it)) return null;
+  if (it.tool === 'cover') return null;
+  const c = { ...it };
+  if (col && c.color !== col) {
+    if (isFormula(c)) {
+      const i = c.src.indexOf(',') + 1, svg = decodeURIComponent(c.src.slice(i));
+      c.src = c.src.slice(0, i) + encodeURIComponent(svg.split(`"${c.color}"`).join(`"${col}"`));
+    }
+    c.color = col;
+    if (c.fill) c.fill = fillFor(col, c.fillMode || 2);
+  }
+  // Stärke nur bei Stiftstrichen und Formen (Marker und Text haben eigene Größen)
+  if (w && ((c.t === 'stroke' && c.tool === 'pen') || c.t === 'shape') && c.size !== w) c.size = w;
+  return c.color !== it.color || c.size !== it.size ? c : null;
+}
+function restyleAt(x, y) {
+  const p = act.p, r = 7 / act.k;
+  const lx = act.ex ?? x, ly = act.ey ?? y, steps = Math.max(1, Math.ceil(Math.hypot(x - lx, y - ly) / (r * 0.7)));
+  act.ex = x; act.ey = y;
+  // Spur des Zauberstifts andeuten
+  const ctx = act.ctx;
+  ctx.save(); ctx.strokeStyle = 'rgba(47,93,80,.35)'; ctx.lineWidth = 2 * r; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(x, y); ctx.stroke(); ctx.restore();
+  let box = null;
+  for (let s = 1; s <= steps; s++) {
+    const ex = lx + (x - lx) * s / steps, ey = ly + (y - ly) * s / steps;
+    p.items = p.items.map(it => {
+      if (act.done.has(it.id) || !hitItem(it, ex, ey, r)) return it;
+      act.done.add(it.id);
+      const c = restyleItem(it); if (!c) return it;
+      const b = unionBox([bbox(it), bbox(c)]);
+      box = box ? unionBox([box, b]) : b;
+      return c;
+    });
+  }
+  if (box) { act.changed = true; renderRegionSoon(act.pe, p, box); if (p.items.some(i => i.t === 'text' && act.done.has(i.id))) renderText(act.pe, p); }
+}
 function eraseAt(x, y) {
   const p = act.p, r = prefs.sizes.eraser / 2 / act.k;
   // Zwischenpositionen ergänzen, damit schnelle Bewegungen nichts überspringen
@@ -1781,6 +1824,7 @@ function moveAct(e) {
   const t = act.tool, ctx = act.ctx;
   if (t === 'pen' || t === 'marker' || t === 'cover') addPts(e);
   else if (t === 'eraser') { eraseAt(x, y); drawEraser(x, y); }
+  else if (t === 'restyle') restyleAt(x, y);
   else if (t === 'lasso') {
     act.poly.push([x, y]);
     ctx.clearRect(0, 0, act.p.w, act.p.h);
@@ -1991,7 +2035,7 @@ function endAct(e) {
     if (tool === 'pen' && scribbleErase(a)) renderInk(pe, p);      // Kritzeln hat gelöscht: Seite neu zeichnen
     else if (a.item.pts.length) addStrokes(pe, p, [a.item]);
     clearLive(pe); commit(p, a.before);
-  } else if (tool === 'eraser') {
+  } else if (tool === 'eraser' || tool === 'restyle') {
     clearLive(pe); if (a.changed) commit(p, a.before);
   } else if (tool === 'lasso') {
     clearLive(pe);
@@ -2593,10 +2637,15 @@ function buildSwatches() {
 }
 const dotPx = (t, v) => clamp(v * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 : t === 'stamp' ? 0.35 : 2), 3, 24);
 /* Drei Schnellwahl-Stärken pro Werkzeug; langes Drücken speichert die aktuelle Stärke */
-const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5], stamp: [20, 32, 52] };
+const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5], stamp: [20, 32, 52], restyle: [1, 2.5, 5] };
 const presetsFor = t => (prefs.presets && prefs.presets[t]) || PRESETS[t];
 function updToolbar() {
-  document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool));
+  document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool || (b.dataset.tool === 'lasso' && prefs.tool === 'restyle')));
+  $('#lassoModes').hidden = prefs.tool !== 'lasso' && prefs.tool !== 'restyle';
+  document.querySelectorAll('[data-lmode]').forEach(b => b.classList.toggle('active', b.dataset.lmode === prefs.tool));
+  $('#restyleBox').hidden = prefs.tool !== 'restyle';
+  $('#btnRsColor').classList.toggle('active', prefs.rsColor !== false);
+  $('#btnRsWidth').classList.toggle('active', prefs.rsWidth !== false);
   document.querySelectorAll('.swatch').forEach(b => b.classList.toggle('active', b.dataset.color === prefs.color));
   const t = prefs.tool, sizeTool = SIZE_RANGE[t] ? t : null;
   $('#sizeBox').hidden = !sizeTool;
@@ -2647,7 +2696,7 @@ function updToolbar() {
 }
 /* Jedes farbige Werkzeug merkt sich seine zuletzt gewählte Farbe (z. B. Stift schwarz, Marker rot:
    beim Zurückwechseln zum Stift ist er wieder schwarz). Der Marker startet in Gelb. */
-const COLOR_TOOLS = ['pen', 'marker', 'shape', 'text', 'stamp'];
+const COLOR_TOOLS = ['pen', 'marker', 'shape', 'text', 'stamp', 'restyle'];
 prefs.toolColors ||= { marker: COLORS[6] };
 function setTool(t) {
   commitText();
@@ -2693,6 +2742,16 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; savePrefs(); updToolbar(); }
   else if (b.id === 'btnAlpha') showPop($('#alphaPop'), b);
+  else if (b.dataset.lmode) {
+    setTool(b.dataset.lmode);
+    if (b.dataset.lmode === 'restyle' && !prefs.rsHint) { prefs.rsHint = true; savePrefs(); toast('Zauberstift: Farbe und Stärke wählen, dann über Striche, Formen oder Text fahren – sie übernehmen den Stil.', 5500); }
+  }
+  else if (b.id === 'btnRsColor' || b.id === 'btnRsWidth') {
+    const key = b.id === 'btnRsColor' ? 'rsColor' : 'rsWidth', other = key === 'rsColor' ? 'rsWidth' : 'rsColor';
+    prefs[key] = prefs[key] === false;
+    if (prefs[key] === false && prefs[other] === false) prefs[other] = true;   // eines von beiden bleibt immer an
+    savePrefs(); updToolbar();
+  }
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
@@ -3362,7 +3421,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 39;
+const APP_VERSION = 40;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;

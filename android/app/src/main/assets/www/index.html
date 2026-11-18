@@ -108,6 +108,14 @@
       <span class="size-dot" id="sizeDot"></span>
       <input type="range" id="sizeRange" aria-label="Stärke">
     </div>
+    <div id="lassoModes" class="seg" hidden>
+      <button data-lmode="lasso" title="Auswählen, verschieben, kopieren …">Lasso</button>
+      <button data-lmode="restyle" title="Zauberstift: über Striche fahren überträgt Farbe und Stärke">✦ Zauberstift</button>
+    </div>
+    <div id="restyleBox" class="seg" hidden>
+      <button id="btnRsColor" title="Farbe übertragen (an/aus)">Farbe</button>
+      <button id="btnRsWidth" title="Strichstärke übertragen (an/aus)">Stärke</button>
+    </div>
     <div id="rulerBox" class="seg" hidden>
       <button id="btnRuler" title="Lineal: jeder Strich wird eine gerade Linie">Lineal</button>
       <button id="btnSnap" title="Textmarker rastet auf PDF-Seiten an den Textzeilen ein">Text einrasten</button>
