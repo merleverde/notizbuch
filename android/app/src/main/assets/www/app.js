@@ -825,9 +825,28 @@ function commit(p, before) {
   S.redo.length = 0;
   updUndo(); markDirty(); queueThumb(p.id);
 }
+/* Ein Verlaufsschritt über mehrere Seiten (z. B. Auswahl auf eine andere Seite gezogen) */
+function commitMulti(befores) {
+  const multi = [];
+  for (const [pid, before] of befores) {
+    const p = pageById(pid); if (!p) continue;
+    if (before.length === p.items.length && before.every((x, i) => x === p.items[i])) continue;
+    multi.push({ pid, before, after: snap(p) });
+  }
+  if (!multi.length) return;
+  S.undo.push(multi.length === 1 ? multi[0] : { multi });
+  if (S.undo.length > 60) S.undo.shift();
+  S.redo.length = 0;
+  updUndo(); markDirty(); multi.forEach(m => queueThumb(m.pid));
+}
 function applyHist(from, to, key) {
   commitText();
   const h = from.pop(); if (!h) return;
+  if (h.multi) {
+    setSel(null);
+    for (const m of h.multi) { const p = pageById(m.pid); if (p) { p.items = m[key].slice(); refreshPage(p); queueThumb(p.id); } }
+    markDirty(); to.push(h); updUndo(); return;
+  }
   if (h.pages) {
     // Seiten-Änderung (einfügen, löschen, verschieben …): ganze Seitenliste zurücksetzen
     const st = wrap.scrollTop;
@@ -1777,8 +1796,12 @@ function moveAct(e) {
     const sh = shapeFromAct(); drawShape(ctx, sh);
     if (sh.kind === 'line' || sh.kind === 'arrow') drawLineInfo(ctx, sh.x1, sh.y1, sh.x2, sh.y2, act.k);
   } else if (t === 'move') {
-    const dx = x - act.x0, dy = y - act.y0;
-    applySel((a, b) => [a + dx, b + dy], 1);
+    act.lcx = e.clientX; act.lcy = e.clientY;
+    // am oberen/unteren Rand automatisch weiterscrollen, damit man auch zu Seiten außerhalb des Bildes ziehen kann
+    const wr = wrap.getBoundingClientRect(), edge = 70, cy = e.clientY;
+    act.asv = cy < wr.top + edge ? -(wr.top + edge - cy) * 0.35 : cy > wr.bottom - edge ? (cy - (wr.bottom - edge)) * 0.35 : 0;
+    if (act.asv && !asRaf) asRaf = requestAnimationFrame(autoScrollTick);
+    moveSelTo(e.clientX, e.clientY);
   } else if (t === 'scale' && act.axis) {
     // Seitengriff: nur Breite (x) bzw. nur Höhe (y), gegenüberliegende Kante bleibt stehen
     const { ax, ay } = act;
@@ -1970,7 +1993,8 @@ function endAct(e) {
   } else if (tool === 'text') {
     if (e.type === 'pointerup') textTap(p, a.x0, a.y0);
   } else if (tool === 'move' || tool === 'scale' || tool === 'rotate') {
-    commit(p, a.before); renderSel();
+    if (a.befores) commitMulti(a.befores); else commit(p, a.before);
+    renderSel();
   }
 }
 
@@ -2067,6 +2091,47 @@ function renderSel() {
     else selAction(a);
   });
   pageEls.get(p.id).el.appendChild(el);
+}
+/* ---- Auswahl verschieben, auch über Seitengrenzen ---- */
+let asRaf = 0;
+function autoScrollTick() {
+  if (!act || act.tool !== 'move' || !act.asv) { asRaf = 0; return; }
+  wrap.scrollTop += act.asv;
+  moveSelTo(act.lcx, act.lcy);
+  asRaf = requestAnimationFrame(autoScrollTick);
+}
+/* Seite, deren Fläche den Bildschirmpunkt enthält (nach Lage, nicht nach dem obersten Element:
+   unter dem Finger liegt beim Ziehen ja die Auswahl selbst) */
+function pageUnder(cx, cy) {
+  for (const p of S.note.pages) {
+    const r = pageEls.get(p.id)?.el.getBoundingClientRect();
+    if (r && cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) return p;
+  }
+  return null;
+}
+function moveSelTo(cx, cy) {
+  const q = pageUnder(cx, cy);
+  if (q && q !== act.p) moveSelToPage(q);
+  act.rect = act.pe.el.getBoundingClientRect(); act.k = act.rect.width / act.p.w;   // Lage ändert sich beim Scrollen
+  const [x, y] = toPageA(cx, cy), dx = x - act.x0, dy = y - act.y0;
+  applySel((a, b) => [a + dx, b + dy], 1);
+}
+/* Die gezogene Auswahl wechselt auf Seite q: Elemente umziehen, Koordinaten umrechnen, Verlauf beider Seiten merken */
+function moveSelToPage(q) {
+  const a = act, p = a.p, qe = pageEls.get(q.id);
+  const rp = a.pe.el.getBoundingClientRect(), rq = qe.el.getBoundingClientRect(), k = rq.width / q.w;
+  const ox = (rp.left - rq.left) / k, oy = (rp.top - rq.top) / k;
+  const tr = it => ({ ...xform(it, (u, v) => [u + ox, v + oy], 1), id: it.id });
+  a.befores ||= new Map([[p.id, a.before]]);
+  if (!a.befores.has(q.id)) a.befores.set(q.id, snap(q));
+  const moving = p.items.filter(i => a.orig.has(i.id));
+  p.items = p.items.filter(i => !a.orig.has(i.id));
+  q.items = [...q.items, ...moving.map(tr)];
+  a.orig = new Map([...a.orig].map(([id, it]) => [id, tr(it)]));
+  a.x0 += ox; a.y0 += oy;
+  Object.assign(a, { p: q, pe: qe, rect: rq, k, lastBox: null });
+  S.sel = { p: q, ids: S.sel.ids };
+  refreshPage(p); refreshPage(q); renderSel();
 }
 function applySel(fn, k, da = 0, kx = k, ky = k) {
   const { p } = act;
@@ -3270,7 +3335,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 35;
+const APP_VERSION = 36;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
