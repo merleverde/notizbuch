@@ -981,7 +981,8 @@ async function exportOverlay(out, pg, p, withPaper) {
       await flush(false);
       if (it.t === 'img') {
         // Fotos unverändert einbetten statt neu zu rastern
-        if (!embedded.has(it.src)) embedded.set(it.src, await (it.src.startsWith('data:image/png') ? out.embedPng(dataUrlBytes(it.src)) : out.embedJpg(dataUrlBytes(it.src))));
+        if (!embedded.has(it.src)) embedded.set(it.src, await (it.src.startsWith('data:image/svg') ? out.embedPng(await svgToPng(it.src, it.w, it.h))
+          : it.src.startsWith('data:image/png') ? out.embedPng(dataUrlBytes(it.src)) : out.embedJpg(dataUrlBytes(it.src))));
         const c = Math.cos(it.rot || 0), s = Math.sin(it.rot || 0);
         v.drawXObject(embedded.get(it.src).ref, [[1, 0, 0, 1, it.x + it.w / 2, it.y + it.h / 2], [c, s, -s, c, 0, 0], [it.w, 0, 0, -it.h, -it.w / 2, it.h / 2]]);
       } else if (it.t === 'shape') drawShape(v, it);
@@ -1835,7 +1836,8 @@ function renderSel() {
   // Leiste unter die Auswahl legen, wenn oben kein Platz ist; rechts ausrichten, wenn sie sonst aus der Seite ragt
   el.className = 'selbox' + (b.y * sc < 110 ? ' below' : '') + (b.x > p.w * 0.45 ? ' right' : '');
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
-  el.innerHTML = `<div class="selbar"><button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern"></div>`;
+  const oneFormula = items.length === 1 && isFormula(items[0]);
+  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern"></div>`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -1849,7 +1851,8 @@ function renderSel() {
   });
   el.querySelector('.selbar').addEventListener('click', e => {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
-    if (a === 'style') openStylePop(btn);
+    if (a === 'formula') openFormula(p, items[0]);
+    else if (a === 'style') openStylePop(btn);
     else if (a === 'layer') showPop($('#layerPop'), btn);
     else selAction(a);
   });
@@ -1946,6 +1949,12 @@ function applyStyle(fn, done) {
   if (done) { commit(p, styleBefore); styleBefore = null; }
 }
 const setSelColor = c => applyStyle(it => {
+  if (isFormula(it) && it.color) {
+    // Formel umfärben: die Farbe steht als Attribut im SVG
+    const i = it.src.indexOf(',') + 1, svg = decodeURIComponent(it.src.slice(i));
+    it.src = it.src.slice(0, i) + encodeURIComponent(svg.split(`"${it.color}"`).join(`"${c}"`)); it.color = c;
+    return;
+  }
   if (it.t === 'img' || it.tool === 'cover') return;
   it.color = c; if (it.fill) it.fill = fillFor(c, it.fillMode || 2);
 }, true);
@@ -1963,7 +1972,10 @@ $('#styleSize').addEventListener('change', () => applyStyle(() => {}, true));
 
 /* ---------------- Text ---------------- */
 function textTap(p, x, y) {
-  const hit = [...p.items].reverse().find(it => it.t === 'text' && inBox(bbox(it), x, y, 4));
+  // Formel antippen: im Formel-Dialog bearbeiten
+  const fm = [...p.items].reverse().find(it => isFormula(it) && inBox(bbox(it), x, y, 4));
+  if (fm) return openFormula(p, fm);
+  const hit =[...p.items].reverse().find(it => it.t === 'text' && inBox(bbox(it), x, y, 4));
   const before = snap(p);
   let it = hit;
   if (it) { it = { ...hit }; p.items[p.items.indexOf(hit)] = it; }   // bearbeitet wird eine Kopie
@@ -2022,6 +2034,142 @@ async function insertImage(file) {
   refreshPage(p); commit(p, before);
   setSel({ p, ids: new Set([it.id]) });
 }
+
+/* ---------------- Formeln (LaTeX) ----------------
+   MathJax (vendor/mathjax, offline in der App) setzt die Formel als SVG. Auf der Seite ist sie ein Bild
+   (t:'img') mit zusätzlich tex (Quelltext), color, mh (Höhe in em) – so funktionieren Verschieben, Größe,
+   Drehen, Ebenen und Kopieren wie bei Fotos. Beim PDF-Speichern wird das SVG in hoher Auflösung eingebettet. */
+let mjReady = null;
+function loadMathJax() {
+  return mjReady ||= new Promise((res, rej) => {
+    window.MathJax = {
+      startup: { typeset: false, ready() { MathJax.startup.defaultReady(); MathJax.startup.promise.then(res, rej); } },
+      tex: { formatError: (jax, err) => { throw err; } },     // Fehler anzeigen statt rot ins Bild setzen
+      svg: { fontCache: 'none' }                                // jedes SVG enthält seine Zeichen selbst
+    };
+    const s = document.createElement('script');
+    s.src = 'vendor/mathjax/tex-svg-full.js';
+    s.onerror = () => { mjReady = null; rej(new Error('Das Formel-Modul konnte nicht geladen werden.')); };
+    document.head.appendChild(s);
+  });
+}
+function texToSvg(tex, color) {
+  if (MathJax.texReset) MathJax.texReset();
+  const svg = MathJax.tex2svg(tex, { display: true }).querySelector('svg');
+  if (!svg) throw new Error('Formel konnte nicht gesetzt werden');
+  const vb = svg.getAttribute('viewBox').split(/[\s,]+/).map(Number);   // Einheiten: 1/1000 em
+  const ew = vb[2] / 1000, eh = vb[3] / 1000;
+  svg.removeAttribute('style'); svg.removeAttribute('role'); svg.removeAttribute('focusable');
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  svg.setAttribute('width', (ew * 40).toFixed(2)); svg.setAttribute('height', (eh * 40).toFixed(2));
+  const str = new XMLSerializer().serializeToString(svg).replace(/currentColor/g, color);
+  return { src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str), ew, eh };
+}
+const isFormula = it => it.t === 'img' && typeof it.tex === 'string';
+
+const MATH_KEYS = [
+  ['a⁄b', '\\frac{|}{}', 'Bruch'], ['√', '\\sqrt{|}', 'Wurzel'], ['ⁿ√', '\\sqrt[|]{}', 'n-te Wurzel'],
+  ['x<sup>2</sup>', '^{|}', 'Hochgestellt'], ['x<sub>1</sub>', '_{|}', 'Tiefgestellt'], ['( )', '\\left( | \\right)', 'Klammern, wachsen mit'],
+  ['∑', '\\sum_{|}^{}', 'Summe'], ['∫', '\\int_{|}^{}', 'Integral'], ['lim', '\\lim_{| \\to }', 'Grenzwert'],
+  ['·', '\\cdot ', 'Mal-Punkt'], ['×', '\\times ', 'Kreuz'], ['±', '\\pm ', 'Plus-minus'],
+  ['≤', '\\le ', 'kleiner gleich'], ['≥', '\\ge ', 'größer gleich'], ['≠', '\\neq ', 'ungleich'], ['≈', '\\approx ', 'ungefähr'],
+  ['→', '\\to ', 'Pfeil'], ['⇒', '\\Rightarrow ', 'Folgepfeil'], ['∞', '\\infty ', 'Unendlich'],
+  ['π', '\\pi ', 'Pi'], ['α', '\\alpha ', 'Alpha'], ['β', '\\beta ', 'Beta'], ['λ', '\\lambda ', 'Lambda'], ['Δ', '\\Delta ', 'Delta'],
+  ['<small>Vektor</small>', '\\vec{|}', 'Vektor'], ['<small>Matrix</small>', '\\begin{pmatrix} | & \\\\  & \\end{pmatrix}', 'Matrix 2×2'],
+  ['<small>Text</small>', '\\text{|}', 'Normaler Text in der Formel']
+];
+let mathCtx = null;          // { p, it } beim Bearbeiten, sonst { p } beim Neu-Einfügen
+let mathTimer = 0;
+function buildMathKeys() {
+  const box = $('#mathKeys');
+  for (const [label, ins, title] of MATH_KEYS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.innerHTML = label; b.title = title; b.dataset.ins = ins;
+    box.appendChild(b);
+  }
+  // Tasten nehmen dem Eingabefeld nicht den Fokus (Tastatur bleibt offen)
+  box.addEventListener('pointerdown', e => { if (e.target.closest('button')) e.preventDefault(); });
+  box.addEventListener('click', e => {
+    const b = e.target.closest('[data-ins]'); if (!b) return;
+    const ta = $('#mathSrc'), s = ta.selectionStart, en = ta.selectionEnd, sel = ta.value.slice(s, en);
+    let ins = b.dataset.ins, caret = ins.indexOf('|');
+    // markierter Text wandert an die Cursorstelle der Vorlage (z. B. markiertes x → \sqrt{x})
+    ins = ins.replace('|', sel); if (caret < 0) caret = ins.length; else if (sel) caret += sel.length;
+    ta.setRangeText(ins, s, en, 'end');
+    ta.selectionStart = ta.selectionEnd = s + caret;
+    ta.focus(); mathPreview();
+  });
+}
+function mathPreview() {
+  clearTimeout(mathTimer);
+  mathTimer = setTimeout(() => {
+    const tex = $('#mathSrc').value.trim(), prev = $('#mathPrev'), err = $('#mathErr');
+    if (!tex) { prev.innerHTML = '<span class="hint">Hier erscheint die Vorschau</span>'; err.textContent = ''; $('#mathOk').disabled = true; return; }
+    try {
+      const r = texToSvg(tex, mathColor());
+      prev.innerHTML = ''; const im = new Image(); im.src = r.src; im.style.height = (r.eh * 28).toFixed(1) + 'px'; prev.appendChild(im);
+      err.textContent = ''; $('#mathOk').disabled = false;
+    } catch (e) { err.textContent = 'Fehler: ' + (e.message || e); $('#mathOk').disabled = true; }
+  }, 150);
+}
+const mathColor = () => mathCtx?.it?.color || prefs.color;
+async function openFormula(p, it = null) {
+  commitText();
+  mathCtx = { p, it };
+  const dlg = $('#mathDlg');
+  $('#mathTitle').textContent = it ? 'Formel bearbeiten' : 'Formel einfügen';
+  $('#mathOk').textContent = it ? 'Übernehmen' : 'Einfügen';
+  $('#mathSrc').value = it ? it.tex : '';
+  $('#mathPrev').innerHTML = '<span class="hint">Formel-Modul wird geladen …</span>'; $('#mathErr').textContent = '';
+  $('#mathOk').disabled = true;
+  dlg.showModal();
+  try { await loadMathJax(); mathPreview(); }
+  catch (e) { $('#mathErr').textContent = e.message; }
+  setTimeout(() => $('#mathSrc').focus(), 50);
+}
+function finishFormula() {
+  const ctx = mathCtx, tex = $('#mathSrc').value.trim();
+  $('#mathDlg').close(); mathCtx = null;
+  if (!ctx || !tex || (ctx.it && ctx.it.tex === tex)) return;
+  const { p } = ctx, pe = pageEls.get(p.id), before = snap(p);
+  let r;
+  try { r = texToSvg(tex, ctx.it ? ctx.it.color : prefs.color); } catch (e) { toast('Fehler in der Formel: ' + e.message); return; }
+  let it;
+  if (ctx.it) {
+    // bisherige Größe (auch nach Vergrößern mit dem Lasso) beibehalten, Mittelpunkt bleibt stehen
+    const old = ctx.it, fs = old.h / old.mh, w = r.ew * fs, h = r.eh * fs;
+    it = { ...old, id: old.id, src: r.src, tex, mh: r.eh, x: old.x + old.w / 2 - w / 2, y: old.y + old.h / 2 - h / 2, w, h };
+    const i = p.items.findIndex(o => o.id === old.id); if (i < 0) return;
+    p.items[i] = it;
+  } else {
+    const fs = prefs.textSize * 1.25;
+    let w = r.ew * fs, h = r.eh * fs;
+    if (w > p.w * 0.9) { const k = p.w * 0.9 / w; w *= k; h *= k; }
+    const rr = pe.el.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), k = rr.width / p.w;
+    const cy = clamp(((wr.top + wr.height / 2) - rr.top) / k, h / 2, p.h - h / 2);
+    it = { t: 'img', id: uid(), x: (p.w - w) / 2, y: cy - h / 2, w, h, src: r.src, tex, color: prefs.color, mh: r.eh };
+    p.items.push(it);
+  }
+  setTool('lasso');
+  refreshPage(p); commit(p, before);
+  setSel({ p, ids: new Set([it.id]) });
+}
+/* SVG-Formel für die PDF als PNG in hoher Auflösung (ca. 450 dpi) */
+async function svgToPng(src, w, h) {
+  const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Formel-Bild')); i.src = src; });
+  const k = Math.min(6.25, 4000 / Math.max(w, h, 1));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+  c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+  return dataUrlBytes(c.toDataURL('image/png'));
+}
+buildMathKeys();
+$('#mathSrc').addEventListener('input', mathPreview);
+$('#mathDlg').addEventListener('click', e => {
+  const m = e.target.closest('[data-m]')?.dataset.m;
+  if (m === 'ok') finishFormula();
+  else if (m === 'cancel') { $('#mathDlg').close(); mathCtx = null; }
+});
+$('#mathDlg').addEventListener('cancel', () => { mathCtx = null; });
 
 /* ---------------- Werkzeugleiste ---------------- */
 function buildSwatches() {
@@ -2123,6 +2271,7 @@ $('#toolbar').addEventListener('click', e => {
   }
   else if (b.id === 'btnBold') { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing(); }
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
+  else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
 $('#sizePresets').addEventListener('pointerdown', e => {
@@ -2776,7 +2925,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 32;
+const APP_VERSION = 33;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;

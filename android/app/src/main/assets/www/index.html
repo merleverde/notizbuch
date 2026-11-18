@@ -131,6 +131,7 @@
         <option value="20">20</option><option value="24">24</option><option value="32">32</option><option value="44">44</option>
       </select>
       <button id="btnBold" title="Fett"><b>F</b></button>
+      <button id="btnFormula" title="Mathe-Formel in LaTeX schreiben">∑ Formel</button>
     </div>
   </div>
 
@@ -260,6 +261,19 @@
   <div class="dlg-actions">
     <button data-x="keep" class="btn">So lassen</button>
     <button data-x="add" class="btn primary">.pdf anfügen</button>
+  </div>
+</dialog>
+
+<dialog id="mathDlg" class="math-dlg">
+  <h2 id="mathTitle">Formel einfügen</h2>
+  <div class="math-keys" id="mathKeys"></div>
+  <textarea id="mathSrc" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
+    placeholder="LaTeX, z. B. \frac{a}{b} = \sqrt{x^2+1}" aria-label="Formel in LaTeX"></textarea>
+  <div id="mathPrev" class="math-prev" aria-live="polite"></div>
+  <p id="mathErr" class="math-err"></p>
+  <div class="dlg-actions">
+    <button data-m="cancel" class="btn">Abbrechen</button>
+    <button data-m="ok" class="btn primary" id="mathOk">Einfügen</button>
   </div>
 </dialog>
 

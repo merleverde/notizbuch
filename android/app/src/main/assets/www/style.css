@@ -307,6 +307,25 @@ dialog {
   box-shadow: var(--shadow); width: min(440px, calc(100vw - 32px));
 }
 dialog::backdrop { background: rgba(10, 15, 13, .4); }
+dialog.math-dlg { width: min(680px, calc(100vw - 32px)); }
+.math-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.math-keys button {
+  min-width: 42px; height: 38px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface-2); color: var(--fg); font-size: 1rem; font-family: "Cambria Math", "STIX Two Math", serif;
+}
+.math-keys button small { font-family: system-ui, sans-serif; font-size: .75rem; }
+#mathSrc {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 70px; padding: 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+  font: 1rem/1.4 ui-monospace, "Roboto Mono", monospace;
+}
+.math-prev {
+  min-height: 70px; max-height: 260px; overflow: auto; margin-top: 10px; padding: 12px; border-radius: 10px;
+  background: #fff; border: 1px dashed var(--line); display: grid; place-items: center;
+}
+.math-prev img { max-width: 100%; }
+.math-prev .hint { color: #69736f; font-size: .9rem; }
+.math-err { min-height: 1.2em; margin: 6px 0 0; color: var(--danger); font-size: .85rem; }
 dialog h2 { margin: 0 0 14px; font-size: 1.2rem; }
 fieldset { border: 0; padding: 0; margin: 0 0 16px; }
 legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 8px; }
