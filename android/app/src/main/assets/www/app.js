@@ -94,7 +94,9 @@ const PEN_STYLES = {
   pencil:      { w: (s, p) => s * (0.7 + 0.5 * p), i: p => 0.15 + 0.85 * p, max: 1.2, grain: true },
   brush:       { w: (s, p) => s * (0.15 + 2.2 * p), i: p => 0.65 + 0.35 * p, max: 2.35 },
   calligraphy: { w: (s, p, a) => s * (0.25 + 1.6 * Math.abs(Math.sin(a - Math.PI / 4))) * (0.6 + 0.5 * p), i: p => 0.7 + 0.3 * p, max: 2 },
-  legacy:      { w: (s, p) => s * (0.35 + 0.9 * p), i: () => 1, max: 1.25 }
+  legacy:      { w: (s, p) => s * (0.35 + 0.9 * p), i: () => 1, max: 1.25 },
+  // Reste radierter Formen: gleichmäßig breite, gerade verbundene Linie wie die Form selbst
+  shape:       { w: s => s, i: () => 1, max: 1, solid: true }
 };
 const penStyle = it => PEN_STYLES[it.style] || PEN_STYLES.legacy;
 const penMaxW = it => (it.tool === 'marker' || it.tool === 'cover') ? it.size : it.size * penStyle(it).max;
@@ -240,7 +242,15 @@ function drawStroke(ctx, it) {
   ctx.save();
   ctx.strokeStyle = ctx.fillStyle = it.color;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  if (it.tool === 'marker' || it.tool === 'cover') {
+  if (it.tool === 'pen' && penStyle(it).solid) {
+    // Rest einer radierten Form: gerade Verbindungen, damit Ecken spitz bleiben
+    ctx.lineWidth = it.size;
+    if (it.dash) ctx.setLineDash([Math.max(3, it.size * 3), Math.max(3, it.size * 2.5)]);
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    if (n === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
+    for (let i = 1; i < n; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  } else if (it.tool === 'marker' || it.tool === 'cover') {
     // Textmarker halbtransparent; Abdecken = deckend in Papierweiß
     ctx.globalAlpha = it.tool === 'marker' ? 0.38 : 1; ctx.lineWidth = it.size;
     if (it.cap) ctx.lineCap = it.cap;                  // an Text eingerastete Markierungen enden gerade
@@ -289,7 +299,48 @@ function drawShape(ctx, it) {
     }
   }
   if (it.fill && closedShape(it)) { ctx.fillStyle = it.fill; ctx.fill(); }
-  ctx.stroke(); ctx.restore();
+  if (!it.noStroke) ctx.stroke();
+  ctx.restore();
+}
+
+/* Bereichsradierer: Form in Linienzüge (Striche) umwandeln, die sich stückweise radieren lassen.
+   Eine Füllung bleibt als eigene Form ohne Rand erhalten. */
+function shapeToStrokes(it) {
+  const base = { t: 'stroke', tool: 'pen', style: 'shape', color: it.color, size: it.size };
+  if (it.dash) base.dash = true;
+  const lines = [];
+  const { x1, y1, x2, y2 } = it;
+  if (it.kind === 'ellipse') {
+    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2, o = [];
+    const n = clamp(Math.ceil(Math.PI * (rx + ry) / 3), 24, 400);
+    for (let i = 0; i <= n; i++) o.push([cx + rx * Math.cos(i / n * Math.PI * 2), cy + ry * Math.sin(i / n * Math.PI * 2)]);
+    lines.push(o);
+  } else if (closedShape(it)) lines.push(shapeOutline(it));
+  else {
+    lines.push([[x1, y1], [x2, y2]]);
+    if (it.kind === 'arrow') {
+      const a = Math.atan2(y2 - y1, x2 - x1), L = Math.max(10, it.size * 4.5);
+      lines.push([[x2 - L * Math.cos(a - 0.45), y2 - L * Math.sin(a - 0.45)], [x2, y2], [x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45)]]);
+    }
+  }
+  const out = [];
+  if (it.fill && closedShape(it)) out.push({ ...it, id: uid(), noStroke: true });
+  lines.forEach((l, i) => out.push({ ...base, id: i ? uid() : it.id, pts: l.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) }));
+  return out;
+}
+/* Zwischenpunkte einfügen, damit auch lange gerade Abschnitte mittendrin radiert werden können */
+function densify(pts, step) {
+  const o = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step);
+    for (let k = 1; k < n; k++) {
+      const t = k / n;
+      const pa = a[2] ?? 0.5, pb = b[2] ?? 0.5;
+      o.push([+(a[0] + (b[0] - a[0]) * t).toFixed(2), +(a[1] + (b[1] - a[1]) * t).toFixed(2), +(pa + (pb - pa) * t).toFixed(2)]);
+    }
+    o.push(b);
+  }
+  return o;
 }
 
 const imgCache = new Map();
@@ -684,8 +735,10 @@ function renderRegion(pe, p, b) {
   const r = ratio(p);
   if (pe.ink.width !== Math.round(p.w * r) || pe.ink.height !== Math.round(p.h * r)) return renderInk(pe, p);
   const items = p.items.filter(it => overlaps(bbox(it), b));
-  const paint = (ctx, scale) => {
-    const m = 2 / scale, x = b.x - m, y = b.y - m, w = b.w + 2 * m, h = b.h + 2 * m;
+  const paint = (ctx, scale, ox = 0, oy = 0) => {
+    // auf ganze Pixel runden: halb gelöschte Randpixel würden sonst als feine Nahtlinie sichtbar
+    const m = 2 / scale, x = Math.floor((b.x - m - ox) * scale) / scale + ox, y = Math.floor((b.y - m - oy) * scale) / scale + oy;
+    const w = Math.ceil((b.x + b.w + m - ox) * scale) / scale + ox - x, h = Math.ceil((b.y + b.h + m - oy) * scale) / scale + oy - y;
     ctx.save();
     ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
     ctx.clearRect(x, y, w, h);
@@ -694,7 +747,7 @@ function renderRegion(pe, p, b) {
   };
   const ctx = pe.ink.getContext('2d'); ctx.setTransform(r, 0, 0, r, 0, 0);
   paint(ctx, r);
-  if (pe.det) paint(detailCtx(pe), pe.det.r);
+  if (pe.det) paint(detailCtx(pe), pe.det.r, pe.det.x0, pe.det.y0);
 }
 /* Neue Elemente liegen ganz oben: nur sie dazuzeichnen statt die ganze Seite neu */
 function drawAdded(pe, p, items) {
@@ -1572,16 +1625,26 @@ function eraseAt(x, y) {
       // betroffener Bereich: beim ganzen Strich dessen Fläche, beim Bereichsradierer nur der Radierkreis
       const hb = (prefs.emode === 'stroke' || it.t === 'shape') ? bbox(it) : { x: ex - r - it.size * 2, y: ey - r - it.size * 2, w: 2 * r + it.size * 4, h: 2 * r + it.size * 4 };
       box = box ? unionBox([box, hb]) : hb;
-      if (prefs.emode === 'stroke' || it.t === 'shape') continue;
-      // Bereichsradierer: Strich an der Radierstelle auftrennen
-      const rr = r + penMaxW(it) / 2 * 0.5;
-      const segs = []; let cur = [];
-      for (const pt of it.pts) {
-        if (Math.hypot(pt[0] - ex, pt[1] - ey) < rr) { if (cur.length) segs.push(cur); cur = []; }
-        else cur.push(pt);
+      if (prefs.emode === 'stroke') continue;
+      // Bereichsradierer: Formen werden zu Linienzügen, die Füllung verschwindet nur, wenn sie berührt wird
+      const parts = it.t === 'shape' ? shapeToStrokes(it) : [it];
+      for (const pa of parts) {
+        if (pa.t === 'shape') { if (!hitItem(pa, ex, ey, r)) out.push(pa); continue; }
+        if (it.t === 'shape') box = unionBox([box, bbox(pa)]);
+        if (!hitItem(pa, ex, ey, r)) { out.push(pa); continue; }
+        // Strich an der Radierstelle auftrennen (weit auseinanderliegende Punkte vorher verfeinern)
+        const rr = r + penMaxW(pa) / 2 * 0.5;
+        const segs = []; let cur = [];
+        const dp = densify(pa.pts, Math.max(0.5, r / 3));
+        // Verlauf bzw. Strichelung verschiebt sich: ganz neu malen
+        if (pa.dash || dp.length !== pa.pts.length) box = unionBox([box, bbox(pa)]);
+        for (const pt of dp) {
+          if (Math.hypot(pt[0] - ex, pt[1] - ey) < rr) { if (cur.length) segs.push(cur); cur = []; }
+          else cur.push(pt);
+        }
+        if (cur.length) segs.push(cur);
+        segs.forEach((pts, i) => out.push({ ...pa, id: i ? uid() : pa.id, pts }));
       }
-      if (cur.length) segs.push(cur);
-      segs.forEach((pts, i) => out.push({ ...it, id: i ? uid() : it.id, pts }));
     }
     p.items = out;
   }
@@ -2685,7 +2748,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
