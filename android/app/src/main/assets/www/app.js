@@ -300,7 +300,8 @@ function drawShape(ctx, it) {
       ctx.lineTo(x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45));
     }
   }
-  if (it.fill && closedShape(it)) { ctx.fillStyle = it.fill; ctx.fill(); }
+  // helle Füllung immer aus der Linienfarbe berechnen: so werden auch ältere (deckende) helle Füllungen durchscheinend
+  if (it.fill && closedShape(it)) { ctx.fillStyle = it.fillMode === 1 ? fillFor(it.color, 1) : it.fill; ctx.fill(); }
   if (!it.noStroke) ctx.stroke();
   ctx.restore();
 }
@@ -1820,7 +1821,15 @@ function moveAct(e) {
   }
 }
 /* Füllung: 1 = heller Farbton, 2 = volle Farbe */
-const fillFor = (color, mode) => mode === 2 ? color : mode === 1 ? shade(color, 0.3) : null;
+/* Füllung: 2 = volle Farbe, 1 = 20 % Farbe (durchscheinend, Schrift darunter bleibt sichtbar) */
+function fillFor(color, mode) {
+  if (mode === 2) return color;
+  if (mode !== 1) return null;
+  const m = /^#([0-9a-f]{6})$/i.exec(color || '');
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},0.2)`;
+}
 /* ---------------- Zirkel ----------------
    1) Spitze auf den Mittelpunkt setzen und nach außen ziehen: legt den Radius fest (in cm angezeigt).
    2) Danach irgendwo auf dem Kreis ansetzen und herumfahren: die Linie folgt genau dem Kreis.
@@ -1941,18 +1950,23 @@ function shapeFromAct(a = act) {
    die sie überdecken: direkt über dem obersten überlappenden Element, das keine Schrift ist
    (Foto, Abdecken, anderer Marker). So bleiben Fotos und Abdeck-Weiß weiterhin darunter. */
 const isInk = it => it.t === 'text' || it.t === 'shape' || (it.t === 'stroke' && it.tool === 'pen');
+/* Formen (Werkzeug „Formen“) kommen ebenfalls unter die Stift-Schrift und Text, die sie überdecken –
+   aber über andere Formen, Fotos, Marker. So bleibt Geschriebenes immer im Vordergrund. */
+const isPenInk = it => it.t === 'text' || (it.t === 'stroke' && it.tool === 'pen' && !penStyle(it).solid);
 function addStrokes(pe, p, items) {
   if (!items.length) return;
-  if (items[0].tool !== 'marker' || prefs.markerBehind === false) { p.items.push(...items); drawAdded(pe, p, items); return; }
+  const marker = items[0].tool === 'marker' && prefs.markerBehind !== false, shape = items[0].t === 'shape';
+  if (!marker && !shape) { p.items.push(...items); drawAdded(pe, p, items); return; }
+  const ink = marker ? isInk : isPenInk;
   const b = unionBox(items.map(bbox));
   let i = p.items.length;
   while (i > 0) {
     const o = p.items[i - 1];
-    if (!isInk(o) && overlaps(bbox(o), b)) break;
+    if (!ink(o) && overlaps(bbox(o), b)) break;
     i--;
   }
   // dann direkt unter die erste überdeckte Schrift (nicht weiter nach unten als nötig)
-  while (i < p.items.length && !(isInk(p.items[i]) && overlaps(bbox(p.items[i]), b))) i++;
+  while (i < p.items.length && !(ink(p.items[i]) && overlaps(bbox(p.items[i]), b))) i++;
   if (i === p.items.length) { p.items.push(...items); drawAdded(pe, p, items); return; }
   p.items.splice(i, 0, ...items);
   if (pe.visible) renderRegion(pe, p, b);
@@ -1989,7 +2003,7 @@ function endAct(e) {
     clearLive(pe); if (e.type === 'pointerup') placeStamp(a);
   } else if (tool === 'shape') {
     clearLive(pe);
-    if (Math.hypot(a.x - a.x0, a.y - a.y0) * a.k > 6) { p.items.push(shapeFromAct(a)); renderInk(pe, p); commit(p, a.before); }
+    if (Math.hypot(a.x - a.x0, a.y - a.y0) * a.k > 6) { addStrokes(pe, p, [shapeFromAct(a)]); commit(p, a.before); }
   } else if (tool === 'text') {
     if (e.type === 'pointerup') textTap(p, a.x0, a.y0);
   } else if (tool === 'move' || tool === 'scale' || tool === 'rotate') {
@@ -2063,11 +2077,15 @@ function renderSel() {
   const { p, ids } = S.sel;
   const items = p.items.filter(i => ids.has(i.id));
   if (!items.length) { S.sel = null; return; }
-  const b = unionBox(items.map(bbox)), sc = scale(), pad = 6;
+  // Rahmen mit Abstand um die Auswahl (mehr Fläche zum Anfassen und Ziehen);
+  // Ankerpunkte werden bei kleinen Auswahlen kleiner (--hs = Größe in px)
+  const b = unionBox(items.map(bbox)), sc = scale(), pad = 18;
+  const hs = clamp(Math.min(b.w, b.h) * sc * 0.16, 10, 18);
   const el = document.createElement('div');
   // Leiste unter die Auswahl legen, wenn oben kein Platz ist; rechts ausrichten, wenn sie sonst aus der Seite ragt
   el.className = 'selbox' + (b.y * sc < 110 ? ' below' : '') + (b.x > p.w * 0.45 ? ' right' : '');
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
+  el.style.setProperty('--hs', hs.toFixed(1) + 'px');
   const oneFormula = items.length === 1 && isFormula(items[0]);
   el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern (Seitenverhältnis bleibt)"></div><div class="edge ew" title="Breite ändern"></div><div class="edge eh" title="Höhe ändern"></div>`;
   el.addEventListener('pointerdown', e => {
@@ -2613,7 +2631,7 @@ function updToolbar() {
   $('#alphaRange').value = tr; $('#alphaVal').textContent = '◐ ' + tr + ' %'; $('#alphaPopVal').textContent = tr + ' %';
   Object.assign($('#alphaDemo').style, { background: prefs.color, opacity: prefs.markerAlpha ?? 0.4 });
   const fm = prefs.fill || 0;
-  $('#btnFill').innerHTML = `<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor" fill-opacity="${[0, 0.3, 1][fm]}" stroke="currentColor" stroke-width="2"/></svg>`;
+  $('#btnFill').innerHTML = `<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor" fill-opacity="${[0, 0.2, 1][fm]}" stroke="currentColor" stroke-width="2"/></svg>`;
   $('#btnFill').title = 'Füllung: ' + ['aus', 'hell', 'voll'][fm] + ' (tippen zum Wechseln)';
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
@@ -3344,7 +3362,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 37;
+const APP_VERSION = 38;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
