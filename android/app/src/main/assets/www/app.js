@@ -803,7 +803,7 @@ function updState() {
   $('#btnSave').textContent = S.handle ? 'Speichern' : 'Als PDF speichern';
 }
 
-const pdfName = () => (S.note.title || 'Notiz').replace(/[\\/:*?"<>|]+/g, '-') + '.pdf';
+const pdfName = () => (S.note.title || 'Notiz').replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]+/g, '-') + '.pdf';
 
 /* ---------------- PDF-Export: Striche als echte Linien ----------------
    PdfCtx versteht den Teil der Canvas-Befehle, den drawPaper/drawStroke/drawShape benutzen, und schreibt
@@ -1009,14 +1009,30 @@ function checkPdf(bytes) {
   return bytes;
 }
 
+/* Hinweis, wenn der gewählte Dateiname keine Endung .pdf hat. Antwort: 'add' oder 'keep'. */
+function askPdfExt(name, mode) {
+  const dlg = $('#extDlg'), fixed = name.replace(/\.+$/, '') + '.pdf';
+  $('#extMsg').textContent = `„${name}“ hat keine Endung .pdf. Ohne sie erkennen andere Apps (z. B. Nextcloud) die Datei eventuell nicht als PDF.` +
+    (mode === 'save' ? ` Der Speicherdialog öffnet sich dann nochmal mit „${fixed}“ – dort nur noch auf Speichern tippen.`
+      : ` Du kannst sie als „${fixed}“ neu speichern; die alte Datei ohne Endung kannst du danach in Nextcloud löschen.`);
+  dlg.querySelector('[data-x="add"]').textContent = mode === 'save' ? '.pdf anfügen' : `Als „${fixed}“ speichern`;
+  return new Promise(res => {
+    const done = v => { dlg.removeEventListener('click', onClick); dlg.removeEventListener('cancel', onCancel); if (dlg.open) dlg.close(); res(v); };
+    const onClick = e => { const b = e.target.closest('[data-x]'); if (b) done(b.dataset.x); };
+    const onCancel = () => done('keep');
+    dlg.addEventListener('click', onClick); dlg.addEventListener('cancel', onCancel);
+    dlg.showModal();
+  });
+}
+
 /* Es läuft immer nur ein Speichervorgang; ein zweiter wartet, bis der erste fertig ist. */
 let saving = null;
-function saveToFile(pickNew = false) {
-  if (saving) return saving.then(() => pickNew ? saveToFile(true) : !S.fileDirty || saveToFile(false));
-  saving = doSave(pickNew).finally(() => { saving = null; });
+function saveToFile(pickNew = false, suggest = null) {
+  if (saving) return saving.then(() => pickNew ? saveToFile(true, suggest) : !S.fileDirty || saveToFile(false));
+  saving = doSave(pickNew, suggest).finally(() => { saving = null; });
   return saving;
 }
-async function doSave(pickNew) {
+async function doSave(pickNew, suggest) {
   commitText();
   const btn = $('#btnSave'); btn.disabled = true;
   let created = null, lock = null;
@@ -1032,8 +1048,18 @@ async function doSave(pickNew) {
     }
     let h = pickNew ? null : S.handle;
     if (!h) {
-      const name = S.handle ? pdfName().replace(/\.pdf$/, ' (bearbeitet).pdf') : pdfName();
+      const name = suggest || (S.handle ? pdfName().replace(/\.pdf$/, ' (bearbeitet).pdf') : pdfName());
       h = created = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
+      // Endung .pdf im Speicherdialog gelöscht (Nextcloud hängt sie nicht selbst an)? Dann die eben angelegte,
+      // noch leere Datei entfernen und den Dialog mit „Name.pdf“ erneut öffnen. Umbenennen wird bewusst nicht
+      // benutzt: danach fehlt bei manchen Speicherorten die Schreiberlaubnis.
+      for (let tries = 0; tries < 2 && !/\.pdf$/i.test(h.name); tries++) {
+        if ((await askPdfExt(h.name, 'save')) !== 'add') break;
+        const want = h.name.replace(/\.+$/, '') + '.pdf';
+        try { await created.remove?.(); } catch {}
+        created = null;
+        h = created = await window.showSaveFilePicker({ suggestedName: want, types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
+      }
     }
     // Bildschirm während des Speicherns wach halten (erst nach dem Dialog, der braucht den frischen Fingertipp)
     try { lock = await navigator.wakeLock?.request('screen'); } catch {}
@@ -1058,6 +1084,7 @@ async function doSave(pickNew) {
     created = null;
     if (h !== S.handle) { S.handle = h; await dbPut('handles', { id: S.note.id, handle: h }); }
     S.note.fileName = h.name;
+    S.note.title = h.name; $('#noteTitle').value = h.name;   // Titelzeile zeigt den Dateinamen
     setFileClean();
     toast(`In „${h.name}“ gespeichert.`);
     return true;
@@ -2174,7 +2201,7 @@ async function pickInsertPdf(after = currentPage()) {
   insertAfter = after;
   if (!FSA) return $('#fileInsert').click();
   try {
-    const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
+    const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'], 'application/octet-stream': [] } }] });
     await insertPdfPages(await h.getFile(), after);
   } catch (e) { if (e.name !== 'AbortError') toast('Öffnen fehlgeschlagen: ' + e.message, 6000); }
 }
@@ -2336,6 +2363,7 @@ async function openNote(note) {
   Object.assign(S, { note, undo: [], redo: [], sel: null, editing: null, zoom: 1, fileDirty: !!note.unsaved, pdf: null, origBytes: null,
     snapshot: { pages: JSON.stringify(note.pages), unsaved: !!note.unsaved } });
   S.handle = revive((await dbGet('handles', note.id))?.handle) || null;
+  if (S.handle?.name) note.title = S.handle.name;            // verknüpfte PDF: Titel = Dateiname
   const b = await dbGet('blobs', note.id);
   if (b) {
     S.origBytes = new Uint8Array(b.bytes);
@@ -2470,13 +2498,18 @@ async function importPdf(file, handle) {
   }
   const now = Date.now();
   const note = {
-    id: existing?.id || uid(), title: existing?.title || file.name.replace(/\.pdf$/i, ''), fileName: file.name,
+    id: existing?.id || uid(), title: file.name, fileName: file.name,
     folder: existing ? existing.folder : S.folder, created: existing?.created || now, updated: now, pages
   };
   if (orig) await dbPut('blobs', { id: note.id, bytes: orig.slice().buffer }); else await dbDel('blobs', note.id);
   if (handle) await dbPut('handles', { id: note.id, handle });
   await dbPut('notes', note);
   await openNote(note);
+  // Datei ohne Endung .pdf geöffnet (z. B. in Nextcloud ohne Endung gespeichert): anbieten, sie als „Name.pdf“ neu zu speichern
+  if (handle && !/\.pdf$/i.test(handle.name) && (await askPdfExt(handle.name, 'open')) === 'add') {
+    await saveToFile(true, handle.name.replace(/\.+$/, '') + '.pdf');
+    return;
+  }
   if (restored) toast('Deine Schrift ist wieder bearbeitbar.');
   else if (foreign) toast('Diese PDF wurde in einer anderen App verändert. Du siehst den aktuellen Stand. Ältere Schrift lässt sich nur noch mit „Abdecken“ entfernen.', 8000);
   else if (!handle) toast('Die Datei ist nur als Kopie geöffnet. „Speichern“ fragt nach einem Speicherort.', 5000);
@@ -2484,7 +2517,7 @@ async function importPdf(file, handle) {
 async function openPdfFlow() {
   if (!FSA) return $('#filePdf').click();
   try {
-    const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }], multiple: false });
+    const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'], 'application/octet-stream': [] } }], multiple: false });
     await importPdf(await h.getFile(), h);
   } catch (e) { if (e.name !== 'AbortError') toast('Öffnen fehlgeschlagen: ' + e.message, 6000); }
 }
@@ -2652,7 +2685,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -2682,9 +2715,11 @@ async function checkForUpdates(manual) {
     if (manual) toast('Keine Verbindung zur Update-Seite. Bitte später nochmal versuchen.', 4000);
   }
 }
+$('#updateDlg').addEventListener('cancel', () => { updateLater = true; });   // Zurück-Taste = „Später“
 $('#updateDlg').addEventListener('click', async e => {
   const u = e.target.closest('[data-u]')?.dataset.u; if (!u) return;
   $('#updateDlg').close();
+  if (u === 'later') updateLater = true;
   if (u !== 'install' || !updateInfo) return;
   commitText(); if (S.note) await saveLocal();          // lokaler Stand ist gesichert, bevor die App ersetzt wird
   toast('Update wird geladen …', 60000);
@@ -2701,10 +2736,18 @@ window.nativeUpdateFailed = msg => toast('Update nicht installiert: ' + msg, 600
 $('#btnUpdate').addEventListener('click', () => { hidePops(); checkForUpdates(true); });
 $('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? showPop($('#settingsPop'), e.currentTarget) : hidePops());
 $('#settingsPop').addEventListener('click', e => { if (e.target.closest('[data-s="update"]')) { hidePops(); checkForUpdates(true); } });
-// In der App einmal am Tag von selbst nachsehen
+// Updates von selbst vorschlagen: beim Start und beim Zurückwechseln in die App (höchstens einmal pro Stunde).
+// „Später“ gilt bis zum nächsten Start der App. Während gerade geschrieben wird, wartet der Vorschlag.
+let updateLater = false, lastAutoCheck = 0;
+function autoCheckUpdates() {
+  if (!NATIVE || updateLater || Date.now() - lastAutoCheck < 3600e3) return;
+  if (act || S.editing || saving || document.querySelector('dialog[open]')) { setTimeout(autoCheckUpdates, 20000); return; }
+  lastAutoCheck = Date.now();
+  checkForUpdates(false);
+}
 if (NATIVE) {
-  let last = 0; try { last = +localStorage.getItem('notizbuch.updateChecked') || 0; } catch {}
-  if (Date.now() - last > 20 * 3600e3) setTimeout(() => checkForUpdates(false), 4000);
+  setTimeout(autoCheckUpdates, 3000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(autoCheckUpdates, 1500); });
 }
 
 /* ---------------- Aufrufe aus der Android-App (MainActivity.java) ---------------- */

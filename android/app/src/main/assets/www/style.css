@@ -396,3 +396,4 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 #settingsPop small { color: var(--muted); }
 #updateDlg p { margin: -6px 0 16px; color: var(--muted); }
 .page canvas.detail { display: none; }
+#extDlg p { margin: -6px 0 16px; color: var(--muted); }
