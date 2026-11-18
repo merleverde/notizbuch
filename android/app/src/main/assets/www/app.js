@@ -2627,21 +2627,30 @@ function updToolbar() {
   $('#optFinger').checked = prefs.finger;
   $('#optEditable').checked = prefs.editable;
 }
+/* Jedes farbige Werkzeug merkt sich seine zuletzt gewählte Farbe (z. B. Stift schwarz, Marker rot:
+   beim Zurückwechseln zum Stift ist er wieder schwarz). Der Marker startet in Gelb. */
+const COLOR_TOOLS = ['pen', 'marker', 'shape', 'text', 'stamp'];
+prefs.toolColors ||= { marker: COLORS[6] };
 function setTool(t) {
   commitText();
   prefs.tool = t;
   if (t === 'pen' || t === 'marker') prefs.lastDraw = t;
+  if (COLOR_TOOLS.includes(t)) {
+    if (prefs.toolColors[t]) prefs.color = prefs.toolColors[t];
+    else prefs.toolColors[t] = prefs.color;
+  }
   savePrefs();
   if (t !== 'lasso') setSel(null);
   updToolbar();
 }
 function setColor(c) {
-  prefs.color = c; savePrefs();
   // Lasso mit Auswahl: die Auswahl umfärben. Radierer oder Lasso ohne Auswahl: zurück zum zuletzt
-  // benutzten Stift (Stift oder Marker) in der neuen Farbe.
-  if (prefs.tool === 'lasso' && S.sel) setSelColor(c);
-  else if (prefs.tool === 'eraser' || prefs.tool === 'lasso') { setTool(prefs.lastDraw || 'pen'); return; }
-  updToolbar(); styleEditing();
+  // benutzten Stift (Stift oder Marker) – in der neu gewählten Farbe.
+  if (prefs.tool === 'lasso' && S.sel) { prefs.color = c; savePrefs(); setSelColor(c); updToolbar(); return; }
+  if (prefs.tool === 'eraser' || prefs.tool === 'lasso') setTool(prefs.lastDraw || 'pen');
+  prefs.color = c;
+  if (COLOR_TOOLS.includes(prefs.tool)) prefs.toolColors[prefs.tool] = c;
+  savePrefs(); updToolbar(); styleEditing();
 }
 
 const PEN_LABELS = { fountain: 'Füller', ball: 'Kuli', pencil: 'Blei', brush: 'Pinsel', calligraphy: 'Kalli' };
@@ -3335,7 +3344,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 36;
+const APP_VERSION = 37;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
