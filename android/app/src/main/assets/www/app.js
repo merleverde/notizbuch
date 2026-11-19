@@ -3454,7 +3454,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 43;
+const APP_VERSION = 44;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -3516,12 +3516,12 @@ window.nativeUpdateFailed = msg => toast('Update nicht installiert: ' + msg, 600
 $('#btnUpdate').addEventListener('click', () => { hidePops(); checkForUpdates(true); });
 $('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? showPop($('#settingsPop'), e.currentTarget) : hidePops());
 $('#settingsPop').addEventListener('click', e => { if (e.target.closest('[data-s="update"]')) { hidePops(); checkForUpdates(true); } });
-// Updates von selbst suchen: beim Start und bei jedem Zurückwechseln in die App (höchstens alle 2 Minuten).
+// Updates von selbst suchen: beim Start und bei jedem Zurückwechseln in die App (höchstens alle 15 Sekunden – die Abfrage ist winzig).
 // Gefunden → oranger Knopf „Update x.y“ oben (bleibt), dazu einmal pro App-Start das Hinweisfenster.
 // „Später“ schließt nur das Fenster. Während gerade geschrieben wird, wartet die Prüfung.
 let updateLater = false, lastAutoCheck = 0;
 function autoCheckUpdates() {
-  if (!NATIVE || Date.now() - lastAutoCheck < 120e3) return;
+  if (!NATIVE || Date.now() - lastAutoCheck < 15e3) return;
   if (act || S.editing || saving || document.querySelector('dialog[open]')) { setTimeout(autoCheckUpdates, 20000); return; }
   lastAutoCheck = Date.now();
   checkForUpdates(false);
