@@ -1892,13 +1892,23 @@ function moveAct(e) {
     if (act.asv && !asRaf) asRaf = requestAnimationFrame(autoScrollTick);
     moveSelTo(e.clientX, e.clientY);
   } else if (t === 'scale' && act.axis) {
-    // Seitengriff: nur Breite (x) bzw. nur Höhe (y), gegenüberliegende Kante bleibt stehen
+    // Seitengriff (alle vier Seiten): nur Breite (x) bzw. nur Höhe (y), gegenüberliegende Kante bleibt stehen
     const { ax, ay } = act;
-    if (act.axis === 'x') { const f = Math.max(0.05, (x - ax) / Math.max(1, act.x0 - ax)); applySel((a, b) => [ax + (a - ax) * f, b], 1, 0, f, 1); }
-    else { const f = Math.max(0.05, (y - ay) / Math.max(1, act.y0 - ay)); applySel((a, b) => [a, ay + (b - ay) * f], 1, 0, 1, f); }
+    // Nenner mit Vorzeichen (links/oben ist er negativ), aber nie fast 0
+    const den = v => Math.sign(v || 1) * Math.max(1, Math.abs(v));
+    if (act.axis === 'x') { const f = Math.max(0.05, (x - ax) / den(act.x0 - ax)); applySel((a, b) => [ax + (a - ax) * f, b], 1, 0, f, 1); }
+    else { const f = Math.max(0.05, (y - ay) / den(act.y0 - ay)); applySel((a, b) => [a, ay + (b - ay) * f], 1, 0, 1, f); }
   } else if (t === 'scale') {
     const { ax, ay } = act, f = Math.max(0.08, Math.hypot(x - ax, y - ay) / act.d0);
     applySel((a, b) => [ax + (a - ax) * f, ay + (b - ay) * f], f);
+  } else if (t === 'lineEnd') {
+    // Linienende ziehen: das andere Ende bleibt stehen, rastet bei 0°/45°/90° ein
+    const i = act.end, o = 3 - i, src = [...act.orig.values()][0];
+    const [nx, ny] = snapLine(src['x' + o], src['y' + o], x, y);
+    const it = { ...src, ['x' + i]: +nx.toFixed(2), ['y' + i]: +ny.toFixed(2) };
+    applySel(null, 1, 0, 1, 1, it);
+    ctx.clearRect(0, 0, act.p.w, act.p.h);
+    drawLineInfo(ctx, it.x1, it.y1, it.x2, it.y2, act.k);
   } else if (t === 'rotate') {
     const { cx, cy } = act;
     let da = Math.atan2(y - cy, x - cx) - act.a0;
@@ -2095,7 +2105,8 @@ function endAct(e) {
     if (Math.hypot(a.x - a.x0, a.y - a.y0) * a.k > 6) { addStrokes(pe, p, [shapeFromAct(a)]); commit(p, a.before); }
   } else if (tool === 'text') {
     if (e.type === 'pointerup') textTap(p, a.x0, a.y0);
-  } else if (tool === 'move' || tool === 'scale' || tool === 'rotate') {
+  } else if (tool === 'move' || tool === 'scale' || tool === 'rotate' || tool === 'lineEnd') {
+    if (a.ctx) a.ctx.clearRect(0, 0, p.w, p.h);
     if (a.befores) commitMulti(a.befores); else commit(p, a.before);
     renderSel();
   }
@@ -2176,16 +2187,27 @@ function renderSel() {
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
   el.style.setProperty('--hs', hs.toFixed(1) + 'px');
   const oneFormula = items.length === 1 && isFormula(items[0]);
-  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div><div class="handle" title="Größe ändern (Seitenverhältnis bleibt)"></div><div class="edge ew" title="Breite ändern"></div><div class="edge eh" title="Höhe ändern"></div>`;
+  // Einzelne Linie/Pfeil: Griffe an beiden Enden; sonst Ecken (proportional) und Seiten (nur Breite/Höhe)
+  const line = items.length === 1 && items[0].t === 'shape' && (items[0].kind === 'line' || items[0].kind === 'arrow') ? items[0] : null;
+  const grips = line
+    ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
+    : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
+      + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
+  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
     e.preventDefault(); hidePops();
     const cl = e.target.classList;
-    const mode = cl.contains('handle') || cl.contains('edge') ? 'scale' : cl.contains('rot') ? 'rotate' : 'move';
+    const mode = cl.contains('lend') ? 'lineEnd' : cl.contains('handle') || cl.contains('edge') ? 'scale' : cl.contains('rot') ? 'rotate' : 'move';
     const orig = new Map(p.items.filter(i => ids.has(i.id)).map(i => [i.id, structuredClone(i)]));
-    startAct(mode, p, e, { orig, axis: cl.contains('ew') ? 'x' : cl.contains('eh') ? 'y' : null });
-    if (mode === 'scale') { act.ax = b.x; act.ay = b.y; act.d0 = Math.max(1, Math.hypot(act.x0 - b.x, act.y0 - b.y)); }
+    startAct(mode, p, e, { orig, axis: cl.contains('ew') ? 'x' : cl.contains('eh') ? 'y' : null, end: +e.target.dataset.i || 0 });
+    if (mode === 'scale') {
+      // Fixpunkt = gegenüberliegende Ecke bzw. Seite
+      const d = e.target.dataset.d || 'se';
+      act.ax = d.includes('w') ? b.x + b.w : b.x; act.ay = d.includes('n') ? b.y + b.h : b.y;
+      act.d0 = Math.max(1, Math.hypot(act.x0 - act.ax, act.y0 - act.ay));
+    }
     if (mode === 'rotate') { act.cx = b.x + b.w / 2; act.cy = b.y + b.h / 2; act.a0 = Math.atan2(act.y0 - act.cy, act.x0 - act.cx); }
     try { el.setPointerCapture(e.pointerId); } catch {}
   });
@@ -2240,9 +2262,9 @@ function moveSelToPage(q) {
   S.sel = { p: q, ids: S.sel.ids };
   refreshPage(p); refreshPage(q); renderSel();
 }
-function applySel(fn, k, da = 0, kx = k, ky = k) {
+function applySel(fn, k, da = 0, kx = k, ky = k, direct = null) {
   const { p } = act;
-  p.items = p.items.map(it => act.orig.has(it.id) ? xform(act.orig.get(it.id), fn, k, da, kx, ky) : it);
+  p.items = p.items.map(it => act.orig.has(it.id) ? (direct || xform(act.orig.get(it.id), fn, k, da, kx, ky)) : it);
   // Nur den Bereich neu zeichnen, wo die Auswahl war und jetzt ist
   const pe = act.pe, now = unionBox(p.items.filter(it => act.orig.has(it.id)).map(bbox));
   renderRegionSoon(pe, p, act.lastBox ? unionBox([act.lastBox, now]) : unionBox([now, ...[...act.orig.values()].map(bbox)]));
@@ -3454,7 +3476,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 44;
+const APP_VERSION = 45;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
