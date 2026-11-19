@@ -1534,12 +1534,24 @@ function drawLineInfo(ctx, x1, y1, x2, y2, k) {
   ctx.save();
   ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'middle';
   const w = ctx.measureText(text).width + 2 * pad, h = fs + 2 * pad;
-  // Schild neben das Linienende setzen, aber auf der Seite halten
-  const bx = clamp(x2 + 14 / k, 2 / k, ctx.canvas.width / ctx.getTransform().a - w - 2 / k);
-  const by = clamp(y2 - h - 14 / k, 2 / k, ctx.canvas.height / ctx.getTransform().d - h - 2 / k);
+  const [bx, by] = badgePos(ctx, x2, y2, w, h, k);
   ctx.fillStyle = 'rgba(28,35,33,.88)'; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 6 / k); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.fillText(text, bx + pad, by + h / 2);
   ctx.restore();
+}
+/* Sichtbarer Bereich der Live-Ebene in Seitenkoordinaten (sie deckt nur den gerade sichtbaren Ausschnitt ab) */
+function liveBounds(ctx) {
+  const t = ctx.getTransform();
+  return { x0: -t.e / t.a, y0: -t.f / t.d, x1: (ctx.canvas.width - t.e) / t.a, y1: (ctx.canvas.height - t.f) / t.d };
+}
+/* Schild (w×h) neben den Punkt (x, y) setzen: bevorzugt rechts oberhalb; ist dort kein Platz im sichtbaren
+   Ausschnitt, auf die andere Seite wechseln und notfalls an den Rand des Ausschnitts schieben */
+function badgePos(ctx, x, y, w, h, k) {
+  const v = liveBounds(ctx), gap = 14 / k, m = 6 / k;
+  let bx = x + gap, by = y - h - gap;
+  if (bx + w > v.x1 - m) bx = x - gap - w;          // rechts kein Platz → links vom Punkt
+  if (by < v.y0 + m) by = y + gap;                  // oben kein Platz → unterhalb
+  return [clamp(bx, v.x0 + m, Math.max(v.x0 + m, v.x1 - w - m)), clamp(by, v.y0 + m, Math.max(v.y0 + m, v.y1 - h - m))];
 }
 function addPts(e) {
   const it = act.item, ctx = act.ctx, k = act.k;
@@ -1919,8 +1931,9 @@ function drawBadge(ctx, x, y, text, k) {
   ctx.save(); ctx.setLineDash([]);
   ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'middle';
   const w = ctx.measureText(text).width + 2 * pad, h = fs + 2 * pad;
-  ctx.fillStyle = 'rgba(28,35,33,.88)'; ctx.beginPath(); ctx.roundRect(x + 14 / k, y - h - 14 / k, w, h, 6 / k); ctx.fill();
-  ctx.fillStyle = '#fff'; ctx.fillText(text, x + 14 / k + pad, y - h / 2 - 14 / k);
+  const [bx, by] = badgePos(ctx, x, y, w, h, k);
+  ctx.fillStyle = 'rgba(28,35,33,.88)'; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 6 / k); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillText(text, bx + pad, by + h / 2);
   ctx.restore();
 }
 function compassStart(a) {
@@ -3441,7 +3454,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 42;
+const APP_VERSION = 43;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
