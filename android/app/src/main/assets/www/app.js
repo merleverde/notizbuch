@@ -2672,9 +2672,7 @@ const dotPx = (t, v) => clamp(v * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 :
 const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5], stamp: [20, 32, 52], restyle: [1, 2.5, 5] };
 const presetsFor = t => (prefs.presets && prefs.presets[t]) || PRESETS[t];
 function updToolbar() {
-  document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool || (b.dataset.tool === 'lasso' && prefs.tool === 'restyle')));
-  $('#lassoModes').hidden = prefs.tool !== 'lasso' && prefs.tool !== 'restyle';
-  document.querySelectorAll('[data-lmode]').forEach(b => b.classList.toggle('active', b.dataset.lmode === prefs.tool));
+  document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool));
   document.querySelectorAll('.swatch').forEach(b => b.classList.toggle('active', b.dataset.color === prefs.color));
   const t = prefs.tool, sizeTool = SIZE_RANGE[t] ? t : null;
   $('#sizeBox').hidden = !sizeTool;
@@ -2766,15 +2764,14 @@ $('#toolbar').addEventListener('click', e => {
     if (prefs.tool === 'pen' && t - lastPenTap < 400) { lastPenTap = 0; showPop($('#penPop'), b); }
     else { lastPenTap = t; setTool('pen'); }
   }
-  else if (b.dataset.tool) setTool(b.dataset.tool);
+  else if (b.dataset.tool) {
+    setTool(b.dataset.tool);
+    if (b.dataset.tool === 'restyle' && !prefs.rsHint) { prefs.rsHint = true; savePrefs(); toast('Zauberstift: Farbe und Stärke wählen, dann über Striche, Formen oder Text fahren – sie übernehmen den Stil.', 5500); }
+  }
   else if (b.dataset.color) setColor(b.dataset.color);
   else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; savePrefs(); updToolbar(); }
   else if (b.id === 'btnAlpha') showPop($('#alphaPop'), b);
-  else if (b.dataset.lmode) {
-    setTool(b.dataset.lmode);
-    if (b.dataset.lmode === 'restyle' && !prefs.rsHint) { prefs.rsHint = true; savePrefs(); toast('Zauberstift: Farbe und Stärke wählen, dann über Striche, Formen oder Text fahren – sie übernehmen den Stil.', 5500); }
-  }
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
@@ -3444,7 +3441,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 41;
+const APP_VERSION = 42;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;

@@ -172,7 +172,7 @@ button { cursor: pointer; }
 #btnSave { margin: 0 4px; }
 
 .toolbar {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
   padding-block: 6px;
   padding-left: max(10px, env(safe-area-inset-left, 0px));
   padding-right: max(10px, env(safe-area-inset-right, 0px));
@@ -183,13 +183,13 @@ button { cursor: pointer; }
 }
 .tools { display: flex; gap: 2px; flex: none; }
 .tool {
-  width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent;
+  width: 40px; height: 44px; border: 0; border-radius: 12px; background: transparent;
   display: grid; place-items: center; color: var(--muted);
 }
 .tool svg { width: 24px; height: 24px; }
 .tool.active { background: var(--accent-soft); color: var(--accent); }
 .sep { width: 1px; height: 28px; background: var(--line); flex: none; }
-.swatches { display: flex; gap: 6px; flex: none; }
+.swatches { display: flex; gap: 5px; flex: none; }
 .swatch {
   width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--surface);
   box-shadow: 0 0 0 1px var(--line); padding: 0;
