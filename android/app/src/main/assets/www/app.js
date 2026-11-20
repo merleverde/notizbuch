@@ -282,6 +282,16 @@ function drawStroke(ctx, it) {
   ctx.restore();
 }
 
+/* Pfeilspitze: Form hf = open (offen) | fill (gefüllt) | stealth (spitz), Größe hs = 0 klein, 1 mittel, 2 groß */
+const HEAD_ICONS = { open: '<path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>', fill: '<path d="M4 12h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 6l8 6-8 6z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>', stealth: '<path d="M4 12h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 12L10 6l3 6-3 6z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>' };
+function headLen(it) { return Math.max(10, it.size * 4.5) * [0.65, 1, 1.5][it.hs ?? 1]; }
+function arrowHead(it) {
+  const { x1, y1, x2, y2 } = it, a = Math.atan2(y2 - y1, x2 - x1), L = headLen(it), hf = it.hf || 'open';
+  const P = (l, da) => [x2 - l * Math.cos(a + da), y2 - l * Math.sin(a + da)];
+  if (hf === 'fill') return { filled: true, pts: [P(L, -0.42), [x2, y2], P(L, 0.42)], end: P(L * Math.cos(0.42) * 0.8, 0) };
+  if (hf === 'stealth') return { filled: true, pts: [P(L, -0.4), [x2, y2], P(L, 0.4), P(L * 0.6, 0)], end: P(L * 0.62, 0) };
+  return { filled: false, pts: [P(L, -0.45), [x2, y2], P(L, 0.45)], end: [x2, y2] };
+}
 const closedShape = it => it.kind === 'rect' || it.kind === 'ellipse' || it.kind === 'poly';
 function drawShape(ctx, it) {
   ctx.save();
@@ -293,11 +303,15 @@ function drawShape(ctx, it) {
   else if (it.kind === 'rect') ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
   else if (it.kind === 'ellipse') ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2);
   else {
-    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-    if (it.kind === 'arrow') {
-      const a = Math.atan2(y2 - y1, x2 - x1), L = Math.max(10, it.size * 4.5);
-      ctx.moveTo(x2 - L * Math.cos(a - 0.45), y2 - L * Math.sin(a - 0.45)); ctx.lineTo(x2, y2);
-      ctx.lineTo(x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45));
+    const hd = it.kind === 'arrow' ? arrowHead(it) : null;
+    ctx.moveTo(x1, y1); ctx.lineTo(...(hd ? hd.end : [x2, y2]));
+    if (hd && !hd.filled) { const [p, q, r] = hd.pts; ctx.moveTo(...p); ctx.lineTo(...q); ctx.lineTo(...r); }
+    if (hd && hd.filled) {
+      // gefüllte Spitze: erst die Linie, dann die Spitze (ohne Strichelung) darüber
+      if (!it.noStroke) ctx.stroke();
+      ctx.setLineDash([]); ctx.beginPath(); hd.pts.forEach((pt, i) => i ? ctx.lineTo(...pt) : ctx.moveTo(...pt)); ctx.closePath();
+      ctx.fillStyle = it.color; ctx.fill(); ctx.lineWidth = Math.min(it.size, 2); ctx.stroke();
+      ctx.restore(); return;
     }
   }
   // helle Füllung immer aus der Linienfarbe berechnen: so werden auch ältere (deckende) helle Füllungen durchscheinend
@@ -311,7 +325,7 @@ function drawShape(ctx, it) {
 function shapeToStrokes(it) {
   const base = { t: 'stroke', tool: 'pen', style: 'shape', color: it.color, size: it.size };
   if (it.dash) base.dash = true;
-  const lines = [];
+  const lines = [], out0 = [];
   const { x1, y1, x2, y2 } = it;
   if (it.kind === 'ellipse') {
     const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2, o = [];
@@ -320,13 +334,15 @@ function shapeToStrokes(it) {
     lines.push(o);
   } else if (closedShape(it)) lines.push(shapeOutline(it));
   else {
-    lines.push([[x1, y1], [x2, y2]]);
-    if (it.kind === 'arrow') {
-      const a = Math.atan2(y2 - y1, x2 - x1), L = Math.max(10, it.size * 4.5);
-      lines.push([[x2 - L * Math.cos(a - 0.45), y2 - L * Math.sin(a - 0.45)], [x2, y2], [x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45)]]);
+    const hd = it.kind === 'arrow' ? arrowHead(it) : null;
+    lines.push([[x1, y1], hd ? hd.end : [x2, y2]]);
+    if (hd && !hd.filled) lines.push(hd.pts);
+    if (hd && hd.filled) {
+      lines.push([...hd.pts, hd.pts[0]]);
+      out0.push({ t: 'shape', kind: 'poly', id: uid(), color: it.color, size: 0.5, pts: hd.pts.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2)]), fill: it.color, fillMode: 2, noStroke: true });
     }
   }
-  const out = [];
+  const out = [...out0];
   if (it.fill && closedShape(it)) out.push({ ...it, id: uid(), noStroke: true });
   lines.forEach((l, i) => out.push({ ...base, id: i ? uid() : it.id, pts: l.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) }));
   return out;
@@ -411,7 +427,7 @@ function bbox(it) {
     return { x: x - m, y: y - m, w: Math.max(...xs) - x + 2 * m, h: Math.max(...ys) - y + 2 * m };
   }
   if (it.t === 'shape') {
-    const m = it.size / 2;
+    const m = it.kind === 'arrow' ? Math.max(it.size / 2, headLen(it)) : it.size / 2;
     return { x: Math.min(it.x1, it.x2) - m, y: Math.min(it.y1, it.y2) - m, w: Math.abs(it.x2 - it.x1) + 2 * m, h: Math.abs(it.y2 - it.y1) + 2 * m };
   }
   if (it.t === 'text') return { x: it.x, y: it.y, w: it.w, h: it.h || it.size * 1.35 };
@@ -2037,6 +2053,7 @@ function shapeFromAct(a = act) {
   if (prefs.fill && prefs.shape !== 'line' && prefs.shape !== 'arrow') { base.fillMode = prefs.fill; base.fill = fillFor(prefs.color, prefs.fill); }
   if (prefs.shape === 'line' || prefs.shape === 'arrow') {
     const [x2, y2] = snapLine(a.x0, a.y0, a.x, a.y);
+    if (prefs.shape === 'arrow') { base.hf = prefs.headForm || 'open'; base.hs = prefs.headSize ?? 1; }
     return { ...base, kind: prefs.shape, x1: a.x0, y1: a.y0, x2, y2 };
   }
   if (prefs.shape === 'triangle') {
@@ -2160,13 +2177,12 @@ function pasteClip(p = currentPage(), x, y) {
 function selectPoly(p, poly) {
   const ids = new Set();
   for (const it of p.items) {
-    if (it.t === 'stroke') {
-      const inside = it.pts.filter(([x, y]) => inPoly(x, y, poly)).length;
-      if (inside && inside >= it.pts.length * 0.5) ids.add(it.id);
-    } else {
-      const b = bbox(it);
-      if (inPoly(b.x + b.w / 2, b.y + b.h / 2, poly)) ids.add(it.id);
-    }
+    // nur Objekte, die VOLLSTÄNDIG im Lasso liegen
+    let pts;
+    if (it.t === 'stroke') pts = it.pts;
+    else if (it.t === 'shape' && ['rect', 'ellipse', 'poly', 'line', 'arrow'].includes(it.kind)) pts = shapeOutline(it);
+    else { const b = bbox(it); pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]; }
+    if (pts.length && pts.every(([x, y]) => inPoly(x, y, poly))) ids.add(it.id);
   }
   setSel(ids.size ? { p, ids } : null);
 }
@@ -2193,7 +2209,7 @@ function renderSel() {
     ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -2214,6 +2230,7 @@ function renderSel() {
   el.querySelector('.selbar').addEventListener('click', e => {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
     if (a === 'formula') openFormula(p, items[0]);
+    else if (a === 'edittext') editTextItem(p, items[0]);
     else if (a === 'stamp') saveSelAsStamp();
     else if (a === 'style') openStylePop(btn);
     else if (a === 'layer') showPop($('#layerPop'), btn);
@@ -2389,6 +2406,7 @@ function textTap(p, x, y) {
     p.items.push(it);
   }
   S.editing = { p, it, before };
+  if (hit) showTextSize(it.size);
   const pe = pageEls.get(p.id);
   renderText(pe, p); renderInk(pe, p);
   const n = pe.text.querySelector(`[data-id="${it.id}"]`);
@@ -2400,6 +2418,21 @@ function textTap(p, x, y) {
   const sel = getSelection(), range = document.createRange();
   range.selectNodeContents(n); range.collapse(false); sel.removeAllRanges(); sel.addRange(range);
 }
+/* Schriftgröße eines vorhandenen Textes in der Auswahl zeigen (auch krumme Größen, z. B. von Stempeln) */
+function showTextSize(sz) {
+  const sel = $('#textSize'), v = String(+(+sz).toFixed(1));
+  if (![...sel.options].some(o => o.value === v)) {
+    sel.querySelector('.cur')?.remove();
+    const o = new Option(v, v); o.className = 'cur';
+    const after = [...sel.options].find(x => +x.value > +v); sel.insertBefore(o, after || null);
+  }
+  sel.value = v;
+}
+/* Markierten Text (auch aus Stempeln) wieder bearbeiten */
+function editTextItem(p, it) {
+  setSel(null); setTool('text');
+  const b = bbox(it); textTap(p, b.x + b.w / 2, b.y + b.h / 2);
+}
 function commitText() {
   const ed = S.editing; if (!ed) return;
   S.editing = null;
@@ -2408,13 +2441,16 @@ function commitText() {
   const n = pe && pe.text.querySelector(`[data-id="${it.id}"]`);
   if (n) { it.text = n.innerText.replace(/\n$/, ''); n.contentEditable = 'false'; n.classList.remove('editing'); }
   if (!it.text.trim()) p.items = p.items.filter(i => i !== it);
+  $("#textSize").querySelector(".cur")?.remove(); $("#textSize").value = prefs.textSize;
   if (pe) { renderText(pe, p); renderInk(pe, p); }
   commit(p, before);
 }
-function styleEditing() {
+function styleEditing(what) {
   if (!S.editing) return;
   const { it, p } = S.editing;
-  it.color = prefs.color; it.size = prefs.textSize; it.bold = prefs.bold;
+  if (what === 'color') it.color = prefs.color;
+  else if (what === 'size') it.size = prefs.textSize;
+  else if (what === 'bold') it.bold = prefs.bold;
   renderText(pageEls.get(p.id), p);
 }
 
@@ -2728,7 +2764,9 @@ function updToolbar() {
   $('#optSmooth').value = String(prefs.smoothing ?? 0);
   $('#eraserModes').hidden = t !== 'eraser';
   $('#shapeKinds').hidden = t !== 'shape';
-  $('#btnFill').hidden = prefs.shape === 'compass';
+  $('#btnFill').hidden = ['compass', 'line', 'arrow'].includes(prefs.shape);
+  $('#btnHead').hidden = prefs.shape !== 'arrow';
+  $('#btnHead').innerHTML = `<svg viewBox="0 0 24 24">${HEAD_ICONS[prefs.headForm || 'open']}</svg>`;
   $('#stampBox').hidden = t !== 'stamp';
   $('#btnStamp').textContent = stampLabel();
   if (S.note) renderCompass();
@@ -2779,14 +2817,42 @@ function setColor(c) {
   if (prefs.tool === 'eraser' || prefs.tool === 'lasso') setTool(prefs.lastDraw || 'pen');
   prefs.color = c;
   if (COLOR_TOOLS.includes(prefs.tool)) prefs.toolColors[prefs.tool] = c;
-  savePrefs(); updToolbar(); styleEditing();
+  savePrefs(); updToolbar(); styleEditing('color');
 }
 
 const PEN_LABELS = { fountain: 'Füller', ball: 'Kuli', pencil: 'Blei', brush: 'Pinsel', calligraphy: 'Kalli' };
 let lastPenTap = 0;
+/* Stift-Menü (Doppeltippen auf den Stift): Stiftart + Farbband mit 10 Farben und eigener Farbe */
+const PEN_COLORS = ['#1b1f24', '#6b7280', '#8b5a2b', '#d0312d', '#ef8a00', '#ffd21f', '#1e8e4f', '#1fa5d6', '#1f4fd1', '#8a3fc2'];
+$('#penColors').innerHTML = PEN_COLORS.map(c => `<button data-pcolor="${c}" style="background:${c}" title="${c}"></button>`).join('')
+  + '<label class="custom-color" title="Eigene Farbe"><input type="color" id="penColor"><span>+</span></label>';
+function syncPenPop() {
+  document.querySelectorAll('#penPop [data-pstyle]').forEach(b => b.classList.toggle('active', b.dataset.pstyle === (prefs.penStyle || 'fountain')));
+  document.querySelectorAll('#penColors [data-pcolor]').forEach(b => b.classList.toggle('active', b.dataset.pcolor.toLowerCase() === String(prefs.color).toLowerCase()));
+  $('#penColor').value = /^#[0-9a-f]{6}$/i.test(prefs.color) ? prefs.color : '#000000';
+}
+$('#penColor').addEventListener('input', e => { setColor(e.target.value); syncPenPop(); });
 $('#penPop').addEventListener('click', e => {
+  const c = e.target.closest('[data-pcolor]');
+  if (c) { setColor(c.dataset.pcolor); syncPenPop(); return; }
   const b = e.target.closest('[data-pstyle]'); if (!b) return;
   prefs.penStyle = b.dataset.pstyle; savePrefs(); hidePops(); setTool('pen');
+});
+function syncHeadPop() {
+  document.querySelectorAll('#headPop [data-hf]').forEach(b => b.classList.toggle('active', b.dataset.hf === (prefs.headForm || 'open')));
+  document.querySelectorAll('#headPop [data-hs]').forEach(b => b.classList.toggle('active', +b.dataset.hs === (prefs.headSize ?? 1)));
+}
+$('#headPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-hf],[data-hs]'); if (!b) return;
+  if (b.dataset.hf) prefs.headForm = b.dataset.hf; else prefs.headSize = +b.dataset.hs;
+  savePrefs(); syncHeadPop(); updToolbar();
+  // markierte Pfeile gleich mit ändern
+  if (S.sel) {
+    const { p, ids } = S.sel, before = snap(p);
+    let ch = false;
+    p.items = p.items.map(it => ids.has(it.id) && it.t === 'shape' && it.kind === 'arrow' ? (ch = true, { ...it, hf: prefs.headForm || 'open', hs: prefs.headSize ?? 1 }) : it);
+    if (ch) { renderRegion(pageEls.get(p.id), p, { x: 0, y: 0, w: p.w, h: p.h }); commit(p, before); renderSel(); }
+  }
 });
 $('#optSmooth').addEventListener('change', e => { prefs.smoothing = +e.target.value; savePrefs(); });
 $('#optScribble').addEventListener('change', e => { prefs.scribble = e.target.checked; savePrefs(); });
@@ -2796,7 +2862,7 @@ $('#toolbar').addEventListener('click', e => {
   if (b.dataset.tool === 'pen') {
     // Doppeltippen auf den Stift öffnet die Auswahl der Stiftart
     const t = performance.now();
-    if (prefs.tool === 'pen' && t - lastPenTap < 400) { lastPenTap = 0; showPop($('#penPop'), b); }
+    if (prefs.tool === 'pen' && t - lastPenTap < 400) { lastPenTap = 0; syncPenPop(); showPop($('#penPop'), b); }
     else { lastPenTap = t; setTool('pen'); }
   }
   else if (b.dataset.tool) {
@@ -2809,6 +2875,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnAlpha') showPop($('#alphaPop'), b);
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnHead') { syncHeadPop(); showPop($('#headPop'), b); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
   else if (b.dataset.shape) {
     prefs.shape = b.dataset.shape; savePrefs(); updToolbar();
@@ -2819,7 +2886,7 @@ $('#toolbar').addEventListener('click', e => {
     if (presetSaved) { presetSaved = false; return; }
     prefs.sizes[prefs.tool] = +b.dataset.value; savePrefs(); updToolbar();
   }
-  else if (b.id === 'btnBold') { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing(); }
+  else if (b.id === 'btnBold') { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing('bold'); }
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
   else if (b.id === 'btnStamp') { buildStampPop(); showPop($('#stampPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
@@ -2842,7 +2909,7 @@ $('#sizePresets').addEventListener('contextmenu', e => e.preventDefault());
 $('#customColor').addEventListener('input', e => setColor(e.target.value));
 $('#sizeRange').addEventListener('input', e => { prefs.sizes[prefs.tool] = +e.target.value; savePrefs(); updToolbar(); });
 $('#alphaRange').addEventListener('input', e => { prefs.markerAlpha = +(1 - e.target.value / 100).toFixed(2); savePrefs(); updToolbar(); });
-$('#textSize').addEventListener('change', e => { prefs.textSize = +e.target.value; savePrefs(); styleEditing(); });
+$('#textSize').addEventListener('change', e => { prefs.textSize = +e.target.value; savePrefs(); styleEditing('size'); });
 $('#fileImg').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (f) try { await insertImage(f); } catch (err) { toast(err.message); }
@@ -3476,7 +3543,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 45;
+const APP_VERSION = 46;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;

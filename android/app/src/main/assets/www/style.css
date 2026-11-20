@@ -474,3 +474,15 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 #updateDlg p { margin: -6px 0 16px; color: var(--muted); }
 .page canvas.detail { display: none; }
 #extDlg p { margin: -6px 0 16px; color: var(--muted); }
+
+/* Stift-Menü: Farbband mit 10 Farben + eigener Farbe */
+.pen-colors { display: flex; align-items: center; gap: 5px; padding: 8px 6px 4px; margin-top: 4px; border-top: 1px solid var(--line); }
+.popover .pen-colors button { width: 22px; height: 22px; padding: 0; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.15); }
+.popover .pen-colors button.active { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.pen-colors .custom-color { width: 22px; height: 22px; font-size: .8rem; }
+/* Pfeilspitze */
+.head-pop { min-width: 0; padding: 10px 12px; gap: 6px; }
+.head-row { display: flex; gap: 6px; }
+.popover .head-row button { flex: 1; justify-content: center; text-align: center; padding: 6px 10px; border: 1px solid var(--line); }
+.popover .head-row button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.head-row svg { width: 26px; height: 26px; display: block; margin: auto; }

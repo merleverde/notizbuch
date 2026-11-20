@@ -132,6 +132,7 @@
       <button data-shape="arrow" title="Pfeil"><svg viewBox="0 0 24 24"><path d="M5 19L19 5M11 5h8v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <button data-shape="compass" title="Zirkel: Mittelpunkt setzen und Radius ziehen, dann am Kreis herumfahren"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 6l-5.5 14M12 6l5.5 14M8.2 15.5c2.4 1.2 5.2 1.2 7.6 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="6" r="1.6" fill="currentColor"/></svg></button>
       <button id="btnFill" title="Füllung der Form: aus, hell oder voll"></button>
+      <button id="btnHead" title="Pfeilspitze: Form und Größe" hidden></button>
       <button id="btnDash" title="Gestrichelte Linie"><svg viewBox="0 0 24 24"><path d="M3 12h4M10 12h4M17 12h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
     </div>
     <div id="stampBox" class="seg" hidden>
@@ -139,6 +140,7 @@
     </div>
     <div id="textOpts" class="seg" hidden>
       <select id="textSize" aria-label="Schriftgröße">
+        <option value="4">4</option><option value="6">6</option><option value="8">8</option><option value="10">10</option>
         <option value="12">12</option><option value="14">14</option><option value="16">16</option>
         <option value="20">20</option><option value="24">24</option><option value="32">32</option><option value="44">44</option>
       </select>
@@ -207,11 +209,24 @@
   <div class="alpha-demo"><span>Beispieltext</span><i id="alphaDemo"></i></div>
 </div>
 <div id="penPop" class="popover pen-pop" hidden aria-label="Stiftart">
-  <button data-pstyle="fountain"><b>Füller</b><span>Druck macht breiter und dunkler</span></button>
-  <button data-pstyle="ball"><b>Kugelschreiber</b><span>Gleichmäßig breit, Druck macht dunkler</span></button>
-  <button data-pstyle="pencil"><b>Bleistift</b><span>Körnig, Druck macht deutlich dunkler</span></button>
-  <button data-pstyle="brush"><b>Pinsel</b><span>Sehr druckempfindlich</span></button>
-  <button data-pstyle="calligraphy"><b>Kalligrafie</b><span>Breite hängt von der Strichrichtung ab</span></button>
+  <button data-pstyle="fountain"><b>Füller</b></button>
+  <button data-pstyle="ball"><b>Kugelschreiber</b></button>
+  <button data-pstyle="pencil"><b>Bleistift</b></button>
+  <button data-pstyle="brush"><b>Pinsel</b></button>
+  <button data-pstyle="calligraphy"><b>Kalligrafie</b></button>
+  <div id="penColors" class="pen-colors" aria-label="Farbe"></div>
+</div>
+<div id="headPop" class="popover head-pop" hidden aria-label="Pfeilspitze">
+  <div class="style-title">Form</div>
+  <div class="head-row">
+    <button data-hf="open" title="Offen"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button data-hf="fill" title="Gefüllt"><svg viewBox="0 0 24 24"><path d="M4 12h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 6l8 6-8 6z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
+    <button data-hf="stealth" title="Spitz"><svg viewBox="0 0 24 24"><path d="M4 12h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 12L10 6l3 6-3 6z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
+  </div>
+  <div class="style-title">Größe</div>
+  <div class="head-row">
+    <button data-hs="0">Klein</button><button data-hs="1">Mittel</button><button data-hs="2">Groß</button>
+  </div>
 </div>
 
 <dialog id="bgDlg">
