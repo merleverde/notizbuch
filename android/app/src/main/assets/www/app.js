@@ -14,6 +14,9 @@ const NATIVE = !!window.NATIVE_APP;                      // läuft in der Androi
 const revive = h => (window.reviveHandle ? window.reviveHandle(h) : h);
 const A4 = [595.28, 841.89];
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
+/* Schriftarten für Textfelder (alle auf Android eingebaut, funktionieren also auch offline) */
+const FONTS = { sans: FONT, serif: '"Noto Serif", Georgia, "Times New Roman", serif', mono: '"Droid Sans Mono", "Courier New", monospace', hand: '"Dancing Script", cursive' };
+const fontOf = it => FONTS[it.font] || FONT;
 const COLORS = ['#1b1f24', '#1f4fd1', '#d0312d', '#1e8e4f', '#ef8a00', '#8a3fc2', '#ffd21f'];
 const SIZE_RANGE = { pen: [0.5, 10, 0.5], marker: [4, 40, 1], eraser: [6, 60, 2], shape: [0.5, 10, 0.5], stamp: [12, 90, 2], restyle: [0.5, 10, 0.5] };
 const DATA_NAME = 'notizbuch.json';
@@ -392,7 +395,7 @@ function drawItems(ctx, items, onImg) {
 
 function drawText(ctx, it) {
   ctx.save();
-  ctx.fillStyle = it.color; ctx.font = `${it.bold ? 700 : 400} ${it.size}px ${FONT}`; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = it.color; ctx.font = `${it.bold ? 700 : 400} ${it.size}px ${fontOf(it)}`; ctx.textBaseline = 'alphabetic';
   const lh = it.size * 1.35;
   let y = it.y + (lh - it.size) / 2 + it.size * 0.86;
   for (const para of it.text.split('\n')) {
@@ -790,7 +793,7 @@ function renderText(pe, p) {
     Object.assign(n.style, {
       left: it.x * sc + 'px', top: it.y * sc + 'px', width: it.w * sc + 'px',
       // nur das Eingabefeld beim Tippen ist sichtbar; sonst zeichnet der Canvas den Text in der richtigen Ebene
-      fontSize: it.size * sc + 'px', color: S.editing && S.editing.it.id === it.id ? it.color : 'transparent', fontWeight: it.bold ? '700' : '400'
+      fontSize: it.size * sc + 'px', color: S.editing && S.editing.it.id === it.id ? it.color : 'transparent', fontWeight: it.bold ? '700' : '400', fontFamily: fontOf(it)
     });
     if (!(S.editing && S.editing.it.id === it.id)) n.textContent = it.text;
     it.h = n.offsetHeight / sc || it.size * 1.35;
@@ -2186,7 +2189,26 @@ function selectPoly(p, poly) {
   }
   setSel(ids.size ? { p, ids } : null);
 }
-function setSel(s) { S.sel = s; renderSel(); }
+function setSel(s) { S.sel = s; renderSel(); syncTextOpts(); }
+/* markierte Textfelder: Größe, Schriftart und Fett lassen sich dann oben in der Leiste genau einstellen */
+function selTexts() { return S.sel ? S.sel.p.items.filter(i => S.sel.ids.has(i.id) && i.t === 'text') : []; }
+function syncTextOpts() {
+  const tx = !S.editing && selTexts();
+  $('#textOpts').hidden = prefs.tool !== 'text' && !(tx && tx.length);
+  if (tx && tx.length) showTextStyle(tx[0]); else if (!S.editing) showTextStyle(null);
+}
+function showTextStyle(it) {
+  showTextSize(it ? it.size : prefs.textSize);
+  $('#textFont').value = (it ? it.font : prefs.textFont) || 'sans';
+  $('#btnBold').classList.toggle('active', !!(it ? it.bold : prefs.bold));
+}
+function styleSelTexts(fn) {
+  const tx = !S.editing && selTexts(); if (!tx || !tx.length) return false;
+  const { p, ids } = S.sel, before = snap(p);
+  p.items = p.items.map(i => ids.has(i.id) && i.t === 'text' ? fn({ ...i }) : i);
+  refreshPage(p); commit(p, before); renderSel(); showTextStyle(selTexts()[0]);
+  return true;
+}
 function renderSel() {
   document.querySelectorAll('.selbox').forEach(n => n.remove());
   if (!S.sel || !S.note) return;
@@ -2401,12 +2423,12 @@ function textTap(p, x, y) {
   let it = hit;
   if (it) { it = { ...hit }; p.items[p.items.indexOf(hit)] = it; }   // bearbeitet wird eine Kopie
   else {
-    it = { t: 'text', id: uid(), x, y: y - prefs.textSize * 0.68, w: Math.min(340, p.w - x - 14), text: '', size: prefs.textSize, color: prefs.color, bold: prefs.bold };
+    it = { t: 'text', id: uid(), x, y: y - prefs.textSize * 0.68, w: Math.min(340, p.w - x - 14), text: '', size: prefs.textSize, color: prefs.color, bold: prefs.bold, font: prefs.textFont || 'sans' };
     if (it.w < 80) { it.w = 180; it.x = Math.max(8, p.w - 190); }
     p.items.push(it);
   }
   S.editing = { p, it, before };
-  if (hit) showTextSize(it.size);
+  if (hit) showTextStyle(it);
   const pe = pageEls.get(p.id);
   renderText(pe, p); renderInk(pe, p);
   const n = pe.text.querySelector(`[data-id="${it.id}"]`);
@@ -2421,8 +2443,8 @@ function textTap(p, x, y) {
 /* Schriftgröße eines vorhandenen Textes in der Auswahl zeigen (auch krumme Größen, z. B. von Stempeln) */
 function showTextSize(sz) {
   const sel = $('#textSize'), v = String(+(+sz).toFixed(1));
+  sel.querySelector('.cur')?.remove();
   if (![...sel.options].some(o => o.value === v)) {
-    sel.querySelector('.cur')?.remove();
     const o = new Option(v, v); o.className = 'cur';
     const after = [...sel.options].find(x => +x.value > +v); sel.insertBefore(o, after || null);
   }
@@ -2441,7 +2463,7 @@ function commitText() {
   const n = pe && pe.text.querySelector(`[data-id="${it.id}"]`);
   if (n) { it.text = n.innerText.replace(/\n$/, ''); n.contentEditable = 'false'; n.classList.remove('editing'); }
   if (!it.text.trim()) p.items = p.items.filter(i => i !== it);
-  $("#textSize").querySelector(".cur")?.remove(); $("#textSize").value = prefs.textSize;
+  syncTextOpts();
   if (pe) { renderText(pe, p); renderInk(pe, p); }
   commit(p, before);
 }
@@ -2451,6 +2473,7 @@ function styleEditing(what) {
   if (what === 'color') it.color = prefs.color;
   else if (what === 'size') it.size = prefs.textSize;
   else if (what === 'bold') it.bold = prefs.bold;
+  else if (what === 'font') it.font = prefs.textFont;
   renderText(pageEls.get(p.id), p);
 }
 
@@ -2785,11 +2808,10 @@ function updToolbar() {
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
   $('#optScribble').checked = prefs.scribble !== false;
-  $('#textOpts').hidden = t !== 'text';
+  $('#textOpts').hidden = t !== 'text' && !selTexts().length;
   document.querySelectorAll('[data-emode]').forEach(b => b.classList.toggle('active', b.dataset.emode === prefs.emode));
   document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('active', b.dataset.shape === prefs.shape));
-  $('#textSize').value = prefs.textSize;
-  $('#btnBold').classList.toggle('active', prefs.bold);
+  if (!S.editing && !selTexts().length) showTextStyle(null);
   $('#customColor').value = /^#[0-9a-f]{6}$/i.test(prefs.color) ? prefs.color : '#000000';
   $('#optFinger').checked = prefs.finger;
   $('#optEditable').checked = prefs.editable;
@@ -2886,7 +2908,7 @@ $('#toolbar').addEventListener('click', e => {
     if (presetSaved) { presetSaved = false; return; }
     prefs.sizes[prefs.tool] = +b.dataset.value; savePrefs(); updToolbar();
   }
-  else if (b.id === 'btnBold') { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing('bold'); }
+  else if (b.id === 'btnBold') { const tx = selTexts(); if (!S.editing && tx.length) { const v = !tx[0].bold; styleSelTexts(i => (i.bold = v, i)); } else { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing('bold'); } }
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
   else if (b.id === 'btnStamp') { buildStampPop(); showPop($('#stampPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
@@ -2909,7 +2931,16 @@ $('#sizePresets').addEventListener('contextmenu', e => e.preventDefault());
 $('#customColor').addEventListener('input', e => setColor(e.target.value));
 $('#sizeRange').addEventListener('input', e => { prefs.sizes[prefs.tool] = +e.target.value; savePrefs(); updToolbar(); });
 $('#alphaRange').addEventListener('input', e => { prefs.markerAlpha = +(1 - e.target.value / 100).toFixed(2); savePrefs(); updToolbar(); });
-$('#textSize').addEventListener('change', e => { prefs.textSize = +e.target.value; savePrefs(); styleEditing('size'); });
+$('#textSize').addEventListener('change', e => {
+  const v = +e.target.value;
+  if (styleSelTexts(i => (i.size = v, i.h = 0, i))) return;   // markierter Text: nur dieser ändert sich
+  prefs.textSize = v; savePrefs(); styleEditing('size');
+});
+$('#textFont').addEventListener('change', e => {
+  const v = e.target.value;
+  if (styleSelTexts(i => (i.font = v, i))) return;
+  prefs.textFont = v; savePrefs(); styleEditing('font');
+});
 $('#fileImg').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (f) try { await insertImage(f); } catch (err) { toast(err.message); }
@@ -3543,7 +3574,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 46;
+const APP_VERSION = 47;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
