@@ -3416,28 +3416,68 @@ async function openPdfFlow() {
 $('#filePdf').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importPdf(f, null); });
 
 /* ---------------- Bibliothek ---------------- */
+/* Ordner sind Pfade wie „Uni/Mathe/Analysis/Kapitel 1“ – beliebig tief verschachtelt */
+const parentOf = f => f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '';
+const leafOf = f => f.slice(f.lastIndexOf('/') + 1);
+const inFolder = (nf, f) => !f || nf === f || (nf || '').startsWith(f + '/');
+const cleanName = n => (n || '').replace(/\//g, '-').replace(/\s+/g, ' ').trim();
+function allFolders(notes) {
+  const set = new Set();
+  for (const f of [...prefs.folders, ...notes.map(n => n.folder)]) {
+    if (!f) continue;
+    const parts = f.split('/'); for (let i = 1; i <= parts.length; i++) set.add(parts.slice(0, i).join('/'));
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'de'));
+}
+async function newFolderIn(parent) {
+  const n = cleanName(prompt(parent ? `Neuer Unterordner in „${leafOf(parent)}“:` : 'Name des neuen Ordners:'));
+  if (!n) return null;
+  const f = parent ? parent + '/' + n : n;
+  prefs.folders = [...new Set([...prefs.folders, f])]; savePrefs();
+  return f;
+}
+/* Ordner umbenennen/verschieben: alle Pfade mit diesem Anfang anpassen (Notizen und leere Ordner) */
+async function remapFolder(from, to) {
+  const map = f => f === from ? to : f && f.startsWith(from + '/') ? (to ? to + f.slice(from.length) : f.slice(from.length + 1)) : f;
+  prefs.folders = [...new Set(prefs.folders.map(map).filter(Boolean))]; savePrefs();
+  for (const n of await dbAll('notes')) if (inFolder(n.folder, from) && n.folder) { n.folder = map(n.folder); await dbPut('notes', n); }
+}
 async function renderLibrary() {
   const notes = (await dbAll('notes')).sort((a, b) => b.updated - a.updated);
-  const folders = [...new Set([...prefs.folders, ...notes.map(n => n.folder).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'de'));
-  const fbox = $('#folders'); fbox.innerHTML = '';
-  const chip = (label, val, cls = '') => {
-    const b = document.createElement('button'); b.className = 'chip ' + cls; b.textContent = label;
-    if (val !== null && S.folder === val) b.classList.add('active');
-    b.onclick = () => {
-      if (val === null) {
-        const n = prompt('Name des neuen Ordners:'); if (!n || !n.trim()) return;
-        prefs.folders = [...new Set([...prefs.folders, n.trim()])]; savePrefs(); S.folder = n.trim();
-      } else S.folder = val;
-      renderLibrary();
-    };
-    fbox.appendChild(b);
+  const folders = allFolders(notes);
+  if (S.folder && !folders.includes(S.folder)) S.folder = '';
+  // Pfad: Alle Notizen › Uni › Mathe  (antippen = dorthin springen, ⋯ = Ordner bearbeiten)
+  const cb = $('#crumbs'); cb.innerHTML = '';
+  const crumb = (label, val) => {
+    const b = document.createElement('button'); b.textContent = label;
+    if (S.folder === val) b.classList.add('cur');
+    b.onclick = () => { S.folder = val; renderLibrary(); };
+    cb.appendChild(b);
   };
-  chip('Alle Notizen', '');
-  folders.forEach(f => chip(f, f));
-  chip('+ Ordner', null, 'add');
+  crumb('Alle Notizen', '');
+  if (S.folder) {
+    const parts = S.folder.split('/');
+    parts.forEach((p, i) => { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; cb.appendChild(s); crumb(p, parts.slice(0, i + 1).join('/')); });
+    const m = document.createElement('button'); m.className = 'fmenu'; m.textContent = '⋯'; m.title = 'Ordner bearbeiten';
+    m.onclick = e => showPop($('#folderPop'), e.currentTarget);
+    cb.appendChild(m);
+  }
+  // Unterordner des aktuellen Ordners
+  const fbox = $('#folders'); fbox.innerHTML = '';
+  for (const f of folders.filter(f => parentOf(f) === S.folder)) {
+    const b = document.createElement('button'); b.className = 'chip dir'; b.textContent = leafOf(f);
+    const cnt = notes.filter(n => inFolder(n.folder, f)).length;
+    if (cnt) { const sm = document.createElement('small'); sm.textContent = cnt; b.appendChild(sm); }
+    b.onclick = () => { S.folder = f; renderLibrary(); };
+    fbox.appendChild(b);
+  }
+  const add = document.createElement('button'); add.className = 'chip add'; add.textContent = S.folder ? '+ Unterordner' : '+ Ordner';
+  add.onclick = async () => { const f = await newFolderIn(S.folder); if (f) { S.folder = f; renderLibrary(); } };
+  fbox.appendChild(add);
 
   const q = S.search.trim().toLowerCase();
-  const list = notes.filter(n => (!S.folder || n.folder === S.folder) && (!q || n.title.toLowerCase().includes(q)));
+  // im Ordner: seine Notizen und die aller Unterordner
+  const list = notes.filter(n => inFolder(n.folder, S.folder) && (!q || n.title.toLowerCase().includes(q)));
   const grid = $('#noteGrid'); grid.innerHTML = '';
   for (const n of list) {
     const card = document.createElement('article'); card.className = 'card'; card.dataset.id = n.id;
@@ -3447,7 +3487,8 @@ async function renderLibrary() {
     if (n.thumb) { const img = new Image(); img.src = n.thumb; img.alt = ''; card.querySelector('.thumb').appendChild(img); }
     card.querySelector('.card-title').textContent = n.title;
     const sub = card.querySelector('.card-sub');
-    sub.textContent = fmtDate(n.updated) + (n.folder && !S.folder ? ' · ' + n.folder : '');
+    const rel = n.folder && n.folder !== S.folder ? (S.folder ? n.folder.slice(S.folder.length + 1) : n.folder) : '';
+    sub.textContent = fmtDate(n.updated) + (rel ? ' · ' + rel.replace(/\//g, ' › ') : '');
     if (n.fileName) { const bd = document.createElement('span'); bd.className = 'badge'; bd.textContent = 'PDF'; sub.prepend(bd); }
     if (n.unsaved && n.fileName) { const u = document.createElement('span'); u.className = 'badge unsaved'; u.textContent = 'nicht gespeichert'; u.title = 'Änderungen liegen nur in der App, nicht in der Datei'; sub.append(u); }
     card.querySelector('.card-open').onclick = () => openNote(n);
@@ -3462,10 +3503,67 @@ $('#cardPop').addEventListener('click', async e => {
   hidePops();
   const n = cardTarget;
   if (c === 'rename') { const t = prompt('Neuer Titel:', n.title); if (t && t.trim()) { n.title = t.trim(); await dbPut('notes', n); } }
-  else if (c === 'move') { const f = prompt('Ordnername (leer lassen für keinen Ordner):', n.folder || ''); if (f !== null) { n.folder = f.trim(); if (n.folder) prefs.folders = [...new Set([...prefs.folders, n.folder])]; savePrefs(); await dbPut('notes', n); } }
+  else if (c === 'move') { const f = await pickFolder(`„${n.title}“`, n.folder || ''); if (f !== null) { n.folder = f; await dbPut('notes', n); } }
+  else if (c === 'copy') {
+    // Kopie mit allem Geschriebenen (und dem Original-PDF); sie ist nicht mit der Datei in Nextcloud verknüpft
+    const f = await pickFolder(`„${n.title}“`, n.folder || '', null, 'kopieren');
+    if (f === null) return;
+    const now = Date.now(), cp = structuredClone(n);
+    Object.assign(cp, { id: uid(), title: n.title.replace(/\.pdf$/i, '') + ' (Kopie)', folder: f, created: now, updated: now });
+    delete cp.unsaved;
+    const bl = await dbGet('blobs', n.id);
+    await dbPut('notes', cp);
+    if (bl) await dbPut('blobs', { ...bl, id: cp.id });
+    toast('Kopie erstellt' + (f ? ` in „${leafOf(f)}“` : '') + '.');
+  }
   else if (c === 'delete') {
     if (!confirm(`„${n.title}“ aus dem Notizbuch löschen?${n.fileName ? ' Die Datei in Nextcloud bleibt erhalten.' : ''}`)) return;
     await dbDel('notes', n.id); await dbDel('blobs', n.id); await dbDel('handles', n.id);
+  }
+  renderLibrary();
+});
+/* Ordner auswählen (eingerückte Liste aller Ordner); null = abgebrochen, '' = ohne Ordner */
+async function pickFolder(what, cur, exclude = null, verb = 'verschieben') {
+  const dlg = $('#moveDlg'), box = $('#moveList');
+  $('#moveMsg').textContent = `${what} ${verb} nach:`;
+  dlg.querySelector('h2').textContent = verb === 'kopieren' ? 'In Ordner kopieren' : 'In Ordner verschieben';
+  const folders = allFolders(await dbAll('notes')).filter(f => !exclude || !inFolder(f, exclude));
+  box.innerHTML = '';
+  const row = (label, val, depth) => {
+    const b = document.createElement('button'); b.dataset.mv = 'f:' + val; b.textContent = label;
+    b.style.paddingLeft = 10 + depth * 22 + 'px';
+    if (val === cur) b.classList.add('cur');
+    box.appendChild(b);
+  };
+  row('Ohne Ordner (oberste Ebene)', '', 0);
+  folders.forEach(f => row('📁 ' + leafOf(f), f, f.split('/').length));
+  const r = await dialogChoice(dlg, 'mv');
+  if (r === 'cancel') return null;
+  if (r === 'new') { const f = await newFolderIn(S.folder); return f; }
+  return r.slice(2);
+}
+$('#folderPop').addEventListener('click', async e => {
+  const c = e.target.closest('button')?.dataset.f; if (!c || !S.folder) return;
+  hidePops();
+  const f = S.folder, parent = parentOf(f);
+  if (c === 'new') { const nf = await newFolderIn(f); if (nf) S.folder = nf; }
+  else if (c === 'rename') {
+    const n = cleanName(prompt('Neuer Name des Ordners:', leafOf(f))); if (!n || n === leafOf(f)) return;
+    const to = parent ? parent + '/' + n : n;
+    await remapFolder(f, to); S.folder = to;
+  } else if (c === 'move') {
+    const dest = await pickFolder(`Ordner „${leafOf(f)}“`, parent, f);
+    if (dest === null || dest === parent || inFolder(dest, f)) return;
+    const to = dest ? dest + '/' + leafOf(f) : leafOf(f);
+    await remapFolder(f, to); S.folder = to;
+  } else if (c === 'delete') {
+    const where = parent ? `„${leafOf(parent)}“` : 'die oberste Ebene';
+    if (!confirm(`Ordner „${leafOf(f)}“ löschen?\nDie Notizen und Unterordner darin werden nicht gelöscht, sondern nach ${where} verschoben.`)) return;
+    // Inhalt eine Ebene nach oben
+    const map = x => x === f ? parent : x.startsWith(f + '/') ? (parent ? parent + '/' : '') + x.slice(f.length + 1) : x;
+    prefs.folders = [...new Set(prefs.folders.map(map).filter(Boolean))]; savePrefs();
+    for (const n of await dbAll('notes')) if (n.folder && inFolder(n.folder, f)) { n.folder = map(n.folder); await dbPut('notes', n); }
+    S.folder = parent;
   }
   renderLibrary();
 });
@@ -3577,7 +3675,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 48;
+const APP_VERSION = 49;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;

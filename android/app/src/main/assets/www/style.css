@@ -101,7 +101,7 @@ button { cursor: pointer; }
 }
 .folders {
   display: flex; gap: 8px; overflow-x: auto;
-  padding-block: 8px 10px;
+  padding-block: 4px 10px;
   padding-left: max(20px, env(safe-area-inset-left, 0px));
   padding-right: max(20px, env(safe-area-inset-right, 0px));
   scrollbar-width: none;
@@ -486,3 +486,20 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 .popover .head-row button { flex: 1; justify-content: center; text-align: center; padding: 6px 10px; border: 1px solid var(--line); }
 .popover .head-row button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .head-row svg { width: 26px; height: 26px; display: block; margin: auto; }
+
+/* Ordnerpfad (Brotkrumen) über den Unterordnern */
+.crumbs {
+  display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; padding-top: 8px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+.crumbs button { flex: none; border: 0; background: transparent; padding: 6px 8px; border-radius: 8px; font-size: .95rem; color: var(--muted); }
+.crumbs button.cur { color: var(--fg); font-weight: 700; }
+.crumbs .sep { color: var(--muted); flex: none; }
+.crumbs .fmenu { font-weight: 700; color: var(--fg); padding: 6px 10px; }
+.chip.dir::before { content: "📁 "; }
+.chip small { color: var(--muted); margin-left: 4px; }
+.move-dlg { width: min(460px, 92vw); }
+.move-list { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; margin: 8px 0; }
+.move-list button { text-align: left; border: 0; background: transparent; padding: 9px 10px; border-radius: 8px; font-size: .95rem; }
+.move-list button:hover, .move-list button:focus-visible { background: var(--accent-soft); }
+.move-list button.cur { background: var(--accent-soft); color: var(--accent); font-weight: 700; }

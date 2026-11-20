@@ -29,6 +29,7 @@
   <div class="lib-tools">
     <input id="search" type="search" placeholder="Notizen durchsuchen" autocomplete="off">
   </div>
+  <nav id="crumbs" class="crumbs" aria-label="Ordnerpfad"></nav>
   <nav id="folders" class="folders" aria-label="Ordner"></nav>
   <div class="lib-scroll">
     <div id="noteGrid" class="note-grid"></div>
@@ -337,9 +338,27 @@
   <button data-b="load"><span><b>Sicherung wiederherstellen …</b><br><small>Notizen aus einer Sicherungsdatei laden</small></span></button>
 </div>
 
+<div id="folderPop" class="popover" hidden>
+  <button data-f="new">Neuer Unterordner …</button>
+  <button data-f="rename">Ordner umbenennen …</button>
+  <button data-f="move">Ordner verschieben …</button>
+  <button data-f="delete" class="danger">Ordner löschen …</button>
+</div>
+
+<dialog id="moveDlg" class="move-dlg">
+  <h2>In Ordner verschieben</h2>
+  <p id="moveMsg"></p>
+  <div id="moveList" class="move-list"></div>
+  <div class="dlg-actions">
+    <button data-mv="new" class="btn">Neuer Ordner …</button>
+    <button data-mv="cancel" class="btn">Abbrechen</button>
+  </div>
+</dialog>
+
 <div id="cardPop" class="popover" hidden>
   <button data-c="rename">Umbenennen</button>
-  <button data-c="move">In Ordner verschieben</button>
+  <button data-c="move">In Ordner verschieben …</button>
+  <button data-c="copy">In Ordner kopieren …</button>
   <button data-c="delete" class="danger">Löschen</button>
 </div>
 
