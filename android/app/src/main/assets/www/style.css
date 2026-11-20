@@ -521,4 +521,4 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 #addonList .check { align-items: flex-start; }
 #addonList small { display: block; color: var(--muted); font-size: .78rem; }
 .statik-grid.prof { grid-template-columns: repeat(4, 1fr); }
-#btnStatik, #btnStahl { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#btnStatik, #btnStahl, #btnMathe { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

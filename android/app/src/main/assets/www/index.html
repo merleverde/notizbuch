@@ -140,6 +140,7 @@
       <button id="btnStamp" title="Stempel auswählen">✓ ▾</button>
       <button id="btnStatik" title="Statik: Auflager und statische Systeme">Statik ▾</button>
       <button id="btnStahl" title="Stahlbauprofile (Querschnitte)">Stahl ▾</button>
+      <button id="btnMathe" title="Mathematik: Koordinatensysteme">Mathe ▾</button>
     </div>
     <div id="textOpts" class="seg" hidden>
       <select id="textSize" aria-label="Schriftgröße">
@@ -217,6 +218,11 @@
   <div class="style-title">Stahlbauprofile (Querschnitte)</div>
   <div id="stahlGrid" class="statik-grid prof"></div>
   <p class="stamp-hint">Der Querschnitt wird mittig dort gesetzt, wo du tippst. Größe über den Regler, Farbe wie gewohnt.</p>
+</div>
+<div id="mathePop" class="popover statik-pop" hidden aria-label="Mathe-Stempel">
+  <div class="style-title">Koordinatensysteme</div>
+  <div id="matheGrid" class="statik-grid prof"></div>
+  <p class="stamp-hint">Der Ursprung (bzw. Mittelpunkt) liegt dort, wo du tippst. Größe über den Regler; Beschriftungen sind normale Texte und lassen sich ändern.</p>
 </div>
 <div id="stampPop" class="popover stamp-pop" hidden aria-label="Stempel">
   <div class="style-title">Stempel</div>

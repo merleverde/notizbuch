@@ -2763,6 +2763,64 @@ function profileItems(id, s, color) {
   }
   return out;
 }
+/* Mathe: Koordinatensysteme. Ursprung bzw. Mittelpunkt bei (0|0), Einheit = Stempelgröße s */
+const MATHE_STAMPS = [
+  { id: 'k2', title: '2D-Koordinatensystem' }, { id: 'k2q', title: '2D, 1. Quadrant' }, { id: 'k2g', title: '2D mit Gitter' },
+  { id: 'k3', title: '3D-Koordinatensystem' }, { id: 'k3r', title: '3D (rechtwinklig, Raum)' },
+  { id: 'pol', title: 'Polarkoordinaten' }, { id: 'polp', title: 'Polar mit Punkt (r, φ)' }
+];
+function matheItems(id, s, color) {
+  const thin = Math.max(0.8, s * 0.025), mid = Math.max(1.1, s * 0.04), out = [], fs = Math.max(8, s * 0.32);
+  const L = (pts, w = thin, dash) => { const it = stampLine(pts.map(([x, y]) => [x * s, y * s]), color, w); if (dash) it.dash = true; out.push(it); };
+  const A = (x1, y1, x2, y2) => out.push({ t: 'shape', id: uid(), kind: 'arrow', x1: x1 * s, y1: y1 * s, x2: x2 * s, y2: y2 * s, color, size: mid, hf: 'fill', hs: 0 });
+  const T = (text, x, y, italic = true) => { const w = text.length * fs * 0.62 + fs * 0.4; out.push({ t: 'text', id: uid(), x: x * s - w / 2, y: y * s - fs * 0.68, w, text, size: +fs.toFixed(1), color, bold: false, font: italic ? 'serif' : 'sans' }); };
+  const C = (r, dash) => out.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: -r * s, y1: -r * s, x2: r * s, y2: r * s, color, size: thin, ...(dash ? { dash: true } : {}) });
+  const ticksX = (a, b, step = 0.5, t = 0.06) => { for (let x = a; x <= b + 1e-6; x += step) if (Math.abs(x) > 1e-6) L([[x, -t], [x, t]]); };
+  const ticksY = (a, b, step = 0.5, t = 0.06) => { for (let y = a; y <= b + 1e-6; y += step) if (Math.abs(y) > 1e-6) L([[-t, y], [t, y]]); };
+  switch (id) {
+    case 'k2': case 'k2g': {
+      if (id === 'k2g') { for (let v = -2; v <= 2 + 1e-6; v += 0.5) if (Math.abs(v) > 1e-6) { L([[v, -2], [v, 2]], thin * 0.7, true); L([[-2, v], [2, v]], thin * 0.7, true); } }
+      A(-2.2, 0, 2.3, 0); A(0, 2.2, 0, -2.3); ticksX(-2, 2); ticksY(-2, 2);
+      T('x', 2.3, 0.3); T('y', 0.28, -2.3); T('0', -0.2, 0.25, false); T('1', 1, 0.28, false); T('1', -0.22, -1, false);
+      break;
+    }
+    case 'k2q': A(-0.15, 0, 3.2, 0); A(0, 0.15, 0, -3.2); ticksX(0.5, 3); ticksY(-3, -0.5);
+      T('x', 3.2, 0.3); T('y', 0.28, -3.2); T('0', -0.2, 0.25, false); T('1', 1, 0.28, false); T('1', -0.22, -1, false); break;
+    case 'k3': {
+      // Schrägbild: x schräg nach vorn-unten (45°, verkürzt), y nach rechts, z nach oben
+      A(0, 0, 2.4, 0); A(0, 0, 0, -2.4); A(0, 0, -1.3, 1.3);
+      L([[0, 0], [-1.6, 0]], thin, true); L([[0, 0], [0, 1.4]], thin, true); L([[0, 0], [0.9, -0.9]], thin, true);
+      for (let k = 0.5; k <= 2 + 1e-6; k += 0.5) { L([[k, -0.06], [k, 0.06]]); L([[-0.06, -k], [0.06, -k]]); }
+      for (let k = 0.5; k <= 1.75; k += 0.5) { const d = k * 0.71 * 0.71; L([[-d - 0.05, d - 0.05], [-d + 0.05, d + 0.05]]); }
+      T('x', -1.45, 1.6); T('y', 2.45, 0.3); T('z', 0.28, -2.4); T('0', 0.2, 0.25, false);
+      break;
+    }
+    case 'k3r': {
+      // Raumecke: z oben, y rechts, x nach vorn-links (wie in vielen Schulbüchern)
+      A(0, 0, 2.3, 0.55); A(0, 0, 0, -2.4); A(0, 0, -1.9, 0.75);
+      T('x', -2.05, 1.05); T('y', 2.45, 0.85); T('z', 0.28, -2.4); T('0', 0.2, -0.25, false);
+      break;
+    }
+    case 'pol': case 'polp': {
+      for (const r of [0.5, 1, 1.5, 2]) C(r, r !== 2);
+      for (let a = 0; a < 360; a += 30) { const t = a * Math.PI / 180; L([[0, 0], [2 * Math.cos(t), -2 * Math.sin(t)]], thin * 0.8, a % 90 !== 0); }
+      A(0, 0, 2.35, 0);
+      for (const [a, lab] of [[0, '0°'], [90, '90°'], [180, '180°'], [270, '270°']]) {
+        const t = a * Math.PI / 180, r = 2.35; T(lab, r * Math.cos(t) + (a === 0 ? 0.15 : 0), -r * Math.sin(t) + (a === 0 ? -0.25 : 0), false);
+      }
+      for (const r of [1, 2]) T(String(r), r - 0.12, 0.22, false);
+      if (id === 'polp') {
+        const t = 50 * Math.PI / 180, r = 1.6, px = r * Math.cos(t), py = -r * Math.sin(t);
+        L([[0, 0], [px, py]], mid);
+        out.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: (px - 0.07) * s, y1: (py - 0.07) * s, x2: (px + 0.07) * s, y2: (py + 0.07) * s, color, size: thin, fill: color, fillMode: 2 });
+        L(arcPts(0, 0, 0.6, 0, -t, 16), mid);
+        T('r', px / 2 - 0.15, py / 2 - 0.12); T('φ', 0.75, -0.3); T('P', px + 0.2, py - 0.15);
+      }
+      break;
+    }
+  }
+  return out;
+}
 const stampLine = (pts, color, size) => ({ t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts: pts.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) });
 const arcPts = (cx, cy, r, a0, a1, n = 24) => Array.from({ length: n + 1 }, (_, i) => { const t = a0 + (a1 - a0) * i / n; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; });
 /* Elemente eines Stempels, Mitte bei (0,0), Höhe etwa s */
@@ -2803,7 +2861,8 @@ function stampAt(x, y) {
   if (sel.startsWith('c:')) {
     const cs = customStamps().find(c => c.id === sel.slice(2)); if (!cs) return [];
     items = cs.items.map(i => ({ ...i, id: uid() }));
-  } else if (sel.startsWith('p:')) items = profileItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  } else if (sel.startsWith('m:')) items = matheItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  else if (sel.startsWith('p:')) items = profileItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
   else if (sel.startsWith('s:')) items = statikItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
   else items = stampItems(sel, prefs.sizes.stamp || 32, prefs.color);
   return items.map(i => ({ ...xform(i, (a, b) => [a + x, b + y], 1), id: i.id }));
@@ -2860,7 +2919,7 @@ function buildStampPop() {
 function stampLabel() {
   const sel = prefs.stamp || 'check';
   if (sel.startsWith('c:')) return 'Eigener ▾';
-  if (sel.startsWith('s:') || sel.startsWith('p:')) return 'Stempel ▾';
+  if (/^[spm]:/.test(sel)) return 'Stempel ▾';
   return (STAMPS.find(s => s.id === sel)?.label || '✓') + ' ▾';
 }
 function statikThumb(items, w, h) {
@@ -2895,6 +2954,20 @@ function buildStahlPop() {
     box.appendChild(b);
   }
 }
+function buildMathePop() {
+  const box = $('#matheGrid'); box.innerHTML = '';
+  for (const st of MATHE_STAMPS) {
+    const b = document.createElement('button'); b.dataset.stamp = 'm:' + st.id; b.title = st.title;
+    b.appendChild(statikThumb(matheItems(st.id, 20, '#1b1f24'), 60, 50));
+    const l = document.createElement('span'); l.textContent = st.title; b.appendChild(l);
+    b.classList.toggle('active', prefs.stamp === 'm:' + st.id);
+    box.appendChild(b);
+  }
+}
+$('#mathePop').addEventListener('click', e => {
+  const b = e.target.closest('[data-stamp]'); if (!b) return;
+  prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
+});
 $('#stahlPop').addEventListener('click', e => {
   const b = e.target.closest('[data-stamp]'); if (!b) return;
   prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
@@ -2956,10 +3029,10 @@ function updToolbar() {
   $('#btnStamp').textContent = stampLabel();
   $('#btnStatik').hidden = !addonOn('statik');
   $('#btnStahl').hidden = !addonOn('stahl');
+  $('#btnMathe').hidden = !addonOn('mathe');
+  $('#btnMathe').classList.toggle('active', (prefs.stamp || '').startsWith('m:'));
   $('#btnStahl').classList.toggle('active', (prefs.stamp || '').startsWith('p:'));
-  $('#btnStahl').textContent = (prefs.stamp || '').startsWith('p:') ? (STAHL_PROFILES.find(x => 'p:' + x.id === prefs.stamp)?.title || 'Stahl') + ' ▾' : 'Stahl ▾';
   $('#btnStatik').classList.toggle('active', (prefs.stamp || '').startsWith('s:'));
-  $('#btnStatik').textContent = (prefs.stamp || '').startsWith('s:') ? (STATIK_SUPPORTS.concat(STATIK_SYSTEMS, STATIK_LOADS).find(x => 's:' + x.id === prefs.stamp)?.title || 'Statik') + ' ▾' : 'Statik ▾';
   if (S.note) renderCompass();
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
@@ -3081,6 +3154,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnStamp') { buildStampPop(); showPop($('#stampPop'), b); }
   else if (b.id === 'btnStatik') { buildStatikPop(); showPop($('#statikPop'), b); }
   else if (b.id === 'btnStahl') { buildStahlPop(); showPop($('#stahlPop'), b); }
+  else if (b.id === 'btnMathe') { buildMathePop(); showPop($('#mathePop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
@@ -3842,7 +3916,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 53;
+const APP_VERSION = 54;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -3906,7 +3980,8 @@ $('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? (bui
 /* Add-ons: Zusatzpakete, die man in den Einstellungen ein- und ausschalten kann (weitere einfach hier ergänzen) */
 var ADDONS = [   // var: wird schon beim Start (updToolbar) gebraucht
   { id: 'statik', title: 'Statik (Bauwesen)', desc: 'Auflager, statische Systeme und Lasten als Stempel', def: true },
-  { id: 'stahl', title: 'Stahlbauprofile', desc: 'Querschnitte: IPE, HEA, HEB, U, L, T, Z, Rohre, Rund- und Flachstahl', def: true }
+  { id: 'stahl', title: 'Stahlbauprofile', desc: 'Querschnitte: IPE, HEA, HEB, U, L, T, Z, Rohre, Rund- und Flachstahl', def: true },
+  { id: 'mathe', title: 'Mathematik', desc: 'Koordinatensysteme (2D, 3D) und Polarkoordinaten als Stempel', def: true }
 ];
 function addonOn(id) { return (prefs.addons || {})[id] ?? (ADDONS || []).find(a => a.id === id)?.def ?? true; }
 function buildAddons() {
@@ -3922,7 +3997,7 @@ function buildAddons() {
 $('#addonList').addEventListener('change', e => {
   const id = e.target.dataset.addon; if (!id) return;
   prefs.addons = { ...(prefs.addons || {}), [id]: e.target.checked };
-  const pre = { statik: 's:', stahl: 'p:' }[id];
+  const pre = { statik: 's:', stahl: 'p:', mathe: 'm:' }[id];
   if (pre && !e.target.checked && (prefs.stamp || '').startsWith(pre)) prefs.stamp = 'check';
   savePrefs(); updToolbar();
   toast(e.target.checked ? 'Add-on eingeschaltet.' : 'Add-on ausgeschaltet. Schon gesetzte Zeichen bleiben erhalten.');
