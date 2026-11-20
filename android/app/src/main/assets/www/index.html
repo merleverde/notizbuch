@@ -139,6 +139,7 @@
     <div id="stampBox" class="seg" hidden>
       <button id="btnStamp" title="Stempel auswählen">✓ ▾</button>
       <button id="btnStatik" title="Statik: Auflager und statische Systeme">Statik ▾</button>
+      <button id="btnStahl" title="Stahlbauprofile (Querschnitte)">Stahl ▾</button>
     </div>
     <div id="textOpts" class="seg" hidden>
       <select id="textSize" aria-label="Schriftgröße">
@@ -211,6 +212,11 @@
   <div class="style-title">Lasten</div>
   <div id="statikLoads" class="statik-grid load"></div>
   <p class="stamp-hint">Auflager und Lasten sitzen mit ihrem Anschlusspunkt (Pfeilspitze, Unterkante) genau dort, wo du tippst. Streckenlasten sind so lang wie die Balken der Systeme. Größe über den Regler.</p>
+</div>
+<div id="stahlPop" class="popover statik-pop" hidden aria-label="Stahlbauprofile">
+  <div class="style-title">Stahlbauprofile (Querschnitte)</div>
+  <div id="stahlGrid" class="statik-grid prof"></div>
+  <p class="stamp-hint">Der Querschnitt wird mittig dort gesetzt, wo du tippst. Größe über den Regler, Farbe wie gewohnt.</p>
 </div>
 <div id="stampPop" class="popover stamp-pop" hidden aria-label="Stempel">
   <div class="style-title">Stempel</div>

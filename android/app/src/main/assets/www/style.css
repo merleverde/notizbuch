@@ -520,3 +520,5 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 .addon-title { padding: 4px 12px 0; }
 #addonList .check { align-items: flex-start; }
 #addonList small { display: block; color: var(--muted); font-size: .78rem; }
+.statik-grid.prof { grid-template-columns: repeat(4, 1fr); }
+#btnStatik, #btnStahl { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

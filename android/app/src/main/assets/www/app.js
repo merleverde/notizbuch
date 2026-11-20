@@ -2729,6 +2729,40 @@ function statikItems(id, s, color) {
   }
   return [...out, ...late];
 }
+/* Stahlbauprofile: Querschnitte, Mitte bei (0|0), Einheit = Stempelgröße s (Proportionen typischer Walzprofile) */
+const STAHL_PROFILES = [
+  { id: 'ipe', title: 'IPE' }, { id: 'hea', title: 'HEA' }, { id: 'heb', title: 'HEB' }, { id: 'upn', title: 'U (UPN)' },
+  { id: 'l', title: 'L gleichschenklig' }, { id: 'lu', title: 'L ungleichschenklig' }, { id: 't', title: 'T' }, { id: 'z', title: 'Z' },
+  { id: 'rhs', title: 'Rechteckrohr' }, { id: 'shs', title: 'Quadratrohr' }, { id: 'chs', title: 'Rundrohr' },
+  { id: 'rd', title: 'Rundstahl' }, { id: 'fl', title: 'Flachstahl' }
+];
+function profileItems(id, s, color) {
+  const thin = Math.max(1, s * 0.035), out = [];
+  const P = pts => out.push({ t: 'shape', id: uid(), kind: 'poly', pts: pts.map(([x, y]) => [+(x * s).toFixed(2), +(y * s).toFixed(2)]), color, size: thin, fill: fillFor(color, 1), fillMode: 1 });
+  const E = (r, white) => out.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: -r * s, y1: -r * s, x2: r * s, y2: r * s, color, size: thin, fill: white ? '#ffffff' : fillFor(color, 1), fillMode: white ? 2 : 1 });
+  const R = (w, h, white) => out.push({ t: 'shape', id: uid(), kind: 'rect', x1: -w / 2 * s, y1: -h / 2 * s, x2: w / 2 * s, y2: h / 2 * s, color, size: thin, fill: white ? '#ffffff' : fillFor(color, 1), fillMode: white ? 2 : 1 });
+  // Doppel-T: Höhe h, Breite b, Stegdicke tw, Flanschdicke tf
+  const I = (h, b, tw, tf) => { const H = h / 2, B = b / 2, W = tw / 2;
+    P([[-B, -H], [B, -H], [B, -H + tf], [W, -H + tf], [W, H - tf], [B, H - tf], [B, H], [-B, H], [-B, H - tf], [-W, H - tf], [-W, -H + tf], [-B, -H + tf]]); };
+  switch (id) {
+    case 'ipe': I(1.4, 0.7, 0.07, 0.11); break;
+    case 'hea': I(1.15, 1.2, 0.09, 0.14); break;
+    case 'heb': I(1.2, 1.2, 0.11, 0.18); break;
+    case 'upn': { const H = 0.7, b = 0.55, tw = 0.1, tf = 0.14, x0 = -b / 2;
+      P([[x0, -H], [x0 + b, -H], [x0 + b, -H + tf * 0.8], [x0 + tw, -H + tf * 1.15], [x0 + tw, H - tf * 1.15], [x0 + b, H - tf * 0.8], [x0 + b, H], [x0, H]]); break; }
+    case 'l': { const a = 1, t = 0.13, o = -a / 2; P([[o, o], [o + t, o], [o + t, o + a - t], [o + a, o + a - t], [o + a, o + a], [o, o + a]]); break; }
+    case 'lu': { const a = 1.2, c = 0.8, t = 0.12, ox = -c / 2, oy = -a / 2; P([[ox, oy], [ox + t, oy], [ox + t, oy + a - t], [ox + c, oy + a - t], [ox + c, oy + a], [ox, oy + a]]); break; }
+    case 't': { const b = 1, h = 1, t = 0.13, B = b / 2, H = h / 2, W = t / 2; P([[-B, -H], [B, -H], [B, -H + t], [W, -H + t], [W, H], [-W, H], [-W, -H + t], [-B, -H + t]]); break; }
+    case 'z': { const H = 0.7, b = 0.5, t = 0.11, W = t / 2;
+      P([[-b, -H], [W, -H], [W, H - t], [b, H - t], [b, H], [-W, H], [-W, -H + t], [-b, -H + t]]); break; }
+    case 'rhs': R(1.4, 0.85); R(1.4 - 0.2, 0.85 - 0.2, true); break;
+    case 'shs': R(1, 1); R(0.8, 0.8, true); break;
+    case 'chs': E(0.6); E(0.5, true); break;
+    case 'rd': E(0.45); break;
+    case 'fl': R(1.3, 0.22); break;
+  }
+  return out;
+}
 const stampLine = (pts, color, size) => ({ t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts: pts.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) });
 const arcPts = (cx, cy, r, a0, a1, n = 24) => Array.from({ length: n + 1 }, (_, i) => { const t = a0 + (a1 - a0) * i / n; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; });
 /* Elemente eines Stempels, Mitte bei (0,0), Höhe etwa s */
@@ -2769,7 +2803,8 @@ function stampAt(x, y) {
   if (sel.startsWith('c:')) {
     const cs = customStamps().find(c => c.id === sel.slice(2)); if (!cs) return [];
     items = cs.items.map(i => ({ ...i, id: uid() }));
-  } else if (sel.startsWith('s:')) items = statikItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  } else if (sel.startsWith('p:')) items = profileItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  else if (sel.startsWith('s:')) items = statikItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
   else items = stampItems(sel, prefs.sizes.stamp || 32, prefs.color);
   return items.map(i => ({ ...xform(i, (a, b) => [a + x, b + y], 1), id: i.id }));
 }
@@ -2825,7 +2860,7 @@ function buildStampPop() {
 function stampLabel() {
   const sel = prefs.stamp || 'check';
   if (sel.startsWith('c:')) return 'Eigener ▾';
-  if (sel.startsWith('s:')) return 'Stempel ▾';
+  if (sel.startsWith('s:') || sel.startsWith('p:')) return 'Stempel ▾';
   return (STAMPS.find(s => s.id === sel)?.label || '✓') + ' ▾';
 }
 function statikThumb(items, w, h) {
@@ -2850,6 +2885,20 @@ function buildStatikPop() {
   fill($('#statikSystems'), STATIK_SYSTEMS, 110, 46);
   fill($('#statikLoads'), STATIK_LOADS, 80, 44);
 }
+function buildStahlPop() {
+  const box = $('#stahlGrid'); box.innerHTML = '';
+  for (const st of STAHL_PROFILES) {
+    const b = document.createElement('button'); b.dataset.stamp = 'p:' + st.id; b.title = st.title;
+    b.appendChild(statikThumb(profileItems(st.id, 20, '#1b1f24'), 60, 46));
+    const l = document.createElement('span'); l.textContent = st.title; b.appendChild(l);
+    b.classList.toggle('active', prefs.stamp === 'p:' + st.id);
+    box.appendChild(b);
+  }
+}
+$('#stahlPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-stamp]'); if (!b) return;
+  prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
+});
 $('#statikPop').addEventListener('click', e => {
   const b = e.target.closest('[data-stamp]'); if (!b) return;
   prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
@@ -2906,6 +2955,9 @@ function updToolbar() {
   $('#stampBox').hidden = t !== 'stamp';
   $('#btnStamp').textContent = stampLabel();
   $('#btnStatik').hidden = !addonOn('statik');
+  $('#btnStahl').hidden = !addonOn('stahl');
+  $('#btnStahl').classList.toggle('active', (prefs.stamp || '').startsWith('p:'));
+  $('#btnStahl').textContent = (prefs.stamp || '').startsWith('p:') ? (STAHL_PROFILES.find(x => 'p:' + x.id === prefs.stamp)?.title || 'Stahl') + ' ▾' : 'Stahl ▾';
   $('#btnStatik').classList.toggle('active', (prefs.stamp || '').startsWith('s:'));
   $('#btnStatik').textContent = (prefs.stamp || '').startsWith('s:') ? (STATIK_SUPPORTS.concat(STATIK_SYSTEMS, STATIK_LOADS).find(x => 's:' + x.id === prefs.stamp)?.title || 'Statik') + ' ▾' : 'Statik ▾';
   if (S.note) renderCompass();
@@ -3028,6 +3080,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
   else if (b.id === 'btnStamp') { buildStampPop(); showPop($('#stampPop'), b); }
   else if (b.id === 'btnStatik') { buildStatikPop(); showPop($('#statikPop'), b); }
+  else if (b.id === 'btnStahl') { buildStahlPop(); showPop($('#stahlPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
@@ -3789,7 +3842,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 52;
+const APP_VERSION = 53;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -3852,7 +3905,8 @@ $('#btnUpdate').addEventListener('click', () => { hidePops(); checkForUpdates(tr
 $('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? (buildAddons(), showPop($('#settingsPop'), e.currentTarget)) : hidePops());
 /* Add-ons: Zusatzpakete, die man in den Einstellungen ein- und ausschalten kann (weitere einfach hier ergänzen) */
 var ADDONS = [   // var: wird schon beim Start (updToolbar) gebraucht
-  { id: 'statik', title: 'Statik (Bauwesen)', desc: 'Auflager, statische Systeme und Lasten als Stempel', def: true }
+  { id: 'statik', title: 'Statik (Bauwesen)', desc: 'Auflager, statische Systeme und Lasten als Stempel', def: true },
+  { id: 'stahl', title: 'Stahlbauprofile', desc: 'Querschnitte: IPE, HEA, HEB, U, L, T, Z, Rohre, Rund- und Flachstahl', def: true }
 ];
 function addonOn(id) { return (prefs.addons || {})[id] ?? (ADDONS || []).find(a => a.id === id)?.def ?? true; }
 function buildAddons() {
@@ -3868,7 +3922,8 @@ function buildAddons() {
 $('#addonList').addEventListener('change', e => {
   const id = e.target.dataset.addon; if (!id) return;
   prefs.addons = { ...(prefs.addons || {}), [id]: e.target.checked };
-  if (id === 'statik' && !e.target.checked && (prefs.stamp || '').startsWith('s:')) prefs.stamp = 'check';
+  const pre = { statik: 's:', stahl: 'p:' }[id];
+  if (pre && !e.target.checked && (prefs.stamp || '').startsWith(pre)) prefs.stamp = 'check';
   savePrefs(); updToolbar();
   toast(e.target.checked ? 'Add-on eingeschaltet.' : 'Add-on ausgeschaltet. Schon gesetzte Zeichen bleiben erhalten.');
 });
