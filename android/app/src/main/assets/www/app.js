@@ -984,6 +984,9 @@ class PdfCtx {
   }
   drawXObject(ref, mats) {
     const key = this.page.node.newXObject('Img', ref);
+    // Bilder (auch gerasterter Text) übernehmen im PDF die aktuelle Füll-Transparenz –
+    // nach einer hellen Füllung oder Textmarker wären sie sonst fast unsichtbar. Darum vorher auf deckend stellen.
+    this.alpha(1, false);
     this.ops.push(PDFLib.pushGraphicsState(), ...mats.map(m => PDFLib.concatTransformationMatrix(...m)), PDFLib.drawObject(key), PDFLib.popGraphicsState());
     this.cur = {};
   }
@@ -3574,7 +3577,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 47;
+const APP_VERSION = 48;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
