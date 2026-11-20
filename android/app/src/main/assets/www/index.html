@@ -138,6 +138,7 @@
     </div>
     <div id="stampBox" class="seg" hidden>
       <button id="btnStamp" title="Stempel auswählen">✓ ▾</button>
+      <button id="btnStatik" title="Statik: Auflager und statische Systeme">Statik ▾</button>
     </div>
     <div id="textOpts" class="seg" hidden>
       <select id="textSize" aria-label="Schriftgröße">
@@ -202,6 +203,13 @@
   </div>
 </section>
 
+<div id="statikPop" class="popover statik-pop" hidden aria-label="Statik-Stempel">
+  <div class="style-title">Auflager</div>
+  <div id="statikSupports" class="statik-grid sup"></div>
+  <div class="style-title">Statische Systeme</div>
+  <div id="statikSystems" class="statik-grid sys"></div>
+  <p class="stamp-hint">Auflager sitzen mit ihrem Anschlusspunkt genau dort, wo du tippst. Größe über den Regler.</p>
+</div>
 <div id="stampPop" class="popover stamp-pop" hidden aria-label="Stempel">
   <div class="style-title">Stempel</div>
   <div id="stampGrid" class="stamp-grid"></div>

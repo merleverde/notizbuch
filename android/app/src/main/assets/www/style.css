@@ -503,3 +503,15 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 .move-list button { text-align: left; border: 0; background: transparent; padding: 9px 10px; border-radius: 8px; font-size: .95rem; }
 .move-list button:hover, .move-list button:focus-visible { background: var(--accent-soft); }
 .move-list button.cur { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+
+/* Statik-Stempel */
+.statik-pop { width: 420px; padding: 12px 14px; gap: 8px; }
+.statik-grid { display: grid; gap: 6px; }
+.statik-grid.sup { grid-template-columns: repeat(5, 1fr); }
+.statik-grid.sys { grid-template-columns: repeat(3, 1fr); }
+.popover .statik-grid button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px 5px;
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #333; font-size: .7rem; line-height: 1.15; text-align: center;
+}
+.popover .statik-grid button.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.statik-grid canvas { display: block; }

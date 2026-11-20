@@ -2647,6 +2647,60 @@ const STAMPS = [
   { id: 'sad', label: '☹', title: 'Traurig' }, { id: 'date', label: 'Datum', title: 'Heutiges Datum' },
   { id: 'done', label: 'Erledigt', title: 'Erledigt-Stempel' }
 ];
+/* Statik (wie in den Bautabellen): Auflager und typische statische Systeme, aus Linien gezeichnet.
+   Einheit = Stempelgröße s; Auflager haben ihren Anschlusspunkt bei (0|0). */
+const STATIK_SUPPORTS = [
+  { id: 'fest', title: 'Festlager' }, { id: 'los', title: 'Loslager' },
+  { id: 'einspL', title: 'Einspannung links' }, { id: 'einspR', title: 'Einspannung rechts' }, { id: 'gelenk', title: 'Gelenk' }
+];
+const STATIK_SYSTEMS = [
+  { id: 'einfeld', title: 'Einfeldträger' }, { id: 'krag', title: 'Kragarm' }, { id: 'ueberstand', title: 'Einfeldträger mit Kragarm' },
+  { id: 'zweifeld', title: 'Zweifeldträger' }, { id: 'einsplos', title: 'Einseitig eingespannt' }, { id: 'beids', title: 'Beidseitig eingespannt' },
+  { id: 'gerber', title: 'Gelenkträger (Gerber)' }, { id: 'zweigelenk', title: 'Zweigelenkrahmen' }, { id: 'dreigelenk', title: 'Dreigelenkrahmen' }
+];
+function statikItems(id, s, color) {
+  const thin = Math.max(1, s * 0.04), thick = Math.max(1.6, s * 0.08), out = [], late = [];
+  const L = (pts, w = thin) => out.push(stampLine(pts.map(([x, y]) => [x * s, y * s]), color, w));
+  const hinge = (x, y, r) => late.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: (x - r) * s, y1: (y - r) * s, x2: (x + r) * s, y2: (y + r) * s, color, size: thin, fill: '#ffffff', fillMode: 2 });
+  const hatch = (x1, x2, y, k) => { for (let x = x1 + 0.12 * k; x <= x2 + 1e-6; x += 0.2 * k) L([[x, y], [x - 0.15 * k, y + 0.17 * k]]); };
+  const tri = (x, y, k, roller) => {
+    L([[x, y], [x - 0.3 * k, y + 0.5 * k], [x + 0.3 * k, y + 0.5 * k], [x, y]]);
+    L([[x - 0.45 * k, y + 0.5 * k], [x + 0.45 * k, y + 0.5 * k]]);
+    let g = y + 0.5 * k;
+    if (roller) { g = y + 0.63 * k; L([[x - 0.45 * k, g], [x + 0.45 * k, g]]); }
+    hatch(x - 0.45 * k, x + 0.45 * k, g, k);
+    hinge(x, y, 0.07 * k);
+  };
+  // Einspannung: Wand senkrecht, Schraffur auf der Wandseite (dir -1 = links, +1 = rechts)
+  const wall = (x, y, k, dir) => {
+    L([[x, y - 0.5 * k], [x, y + 0.5 * k]], thick);
+    for (let yy = y - 0.45 * k; yy <= y + 0.5 * k + 1e-6; yy += 0.19 * k) L([[x, yy], [x + dir * 0.17 * k, yy - 0.15 * k]]);
+  };
+  const beam = (x1, x2, y = 0) => L([[x1, y], [x2, y]], thick);
+  const k = 0.75;
+  switch (id) {
+    case 'fest': tri(0, 0, 1, false); break;
+    case 'los': tri(0, 0, 1, true); break;
+    case 'einspL': wall(0, 0, 1, -1); break;
+    case 'einspR': wall(0, 0, 1, 1); break;
+    case 'gelenk': hinge(0, 0, 0.12); break;
+    case 'einfeld': beam(-2, 2); tri(-2, 0, k); tri(2, 0, k, true); break;
+    case 'krag': wall(-2, 0, k, -1); beam(-2, 2); break;
+    case 'ueberstand': beam(-2, 2.6); tri(-2, 0, k); tri(1.2, 0, k, true); break;
+    case 'zweifeld': beam(-2.5, 2.5); tri(-2.5, 0, k); tri(0, 0, k, true); tri(2.5, 0, k, true); break;
+    case 'einsplos': wall(-2, 0, k, -1); beam(-2, 2); tri(2, 0, k, true); break;
+    case 'beids': wall(-2, 0, k, -1); wall(2, 0, k, 1); beam(-2, 2); break;
+    case 'gerber': beam(-3, 3); tri(-3, 0, k); tri(-1, 0, k, true); tri(3, 0, k, true); hinge(0.8, 0, 0.09); break;
+    case 'zweigelenk': case 'dreigelenk': {
+      const top = -1.1, bot = 0.9;
+      L([[-1.8, bot], [-1.8, top], [1.8, top], [1.8, bot]], thick);
+      tri(-1.8, bot, k); tri(1.8, bot, k);
+      if (id === 'dreigelenk') hinge(0, top, 0.09);
+      break;
+    }
+  }
+  return [...out, ...late];
+}
 const stampLine = (pts, color, size) => ({ t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts: pts.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) });
 const arcPts = (cx, cy, r, a0, a1, n = 24) => Array.from({ length: n + 1 }, (_, i) => { const t = a0 + (a1 - a0) * i / n; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; });
 /* Elemente eines Stempels, Mitte bei (0,0), Höhe etwa s */
@@ -2687,7 +2741,8 @@ function stampAt(x, y) {
   if (sel.startsWith('c:')) {
     const cs = customStamps().find(c => c.id === sel.slice(2)); if (!cs) return [];
     items = cs.items.map(i => ({ ...i, id: uid() }));
-  } else items = stampItems(sel, prefs.sizes.stamp || 32, prefs.color);
+  } else if (sel.startsWith('s:')) items = statikItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  else items = stampItems(sel, prefs.sizes.stamp || 32, prefs.color);
   return items.map(i => ({ ...xform(i, (a, b) => [a + x, b + y], 1), id: i.id }));
 }
 function stampPreview(a) {
@@ -2742,8 +2797,34 @@ function buildStampPop() {
 function stampLabel() {
   const sel = prefs.stamp || 'check';
   if (sel.startsWith('c:')) return 'Eigener ▾';
+  if (sel.startsWith('s:')) return 'Stempel ▾';
   return (STAMPS.find(s => s.id === sel)?.label || '✓') + ' ▾';
 }
+function statikThumb(items, w, h) {
+  const R = 2, c = document.createElement('canvas'); c.width = w * R; c.height = h * R; c.style.width = w + 'px'; c.style.height = h + 'px';
+  const b = unionBox(items.map(bbox)), k = Math.min((w - 8) / Math.max(1, b.w), (h - 8) / Math.max(1, b.h), 2.6) * R;   // kleine Symbole (Gelenk) nicht riesig aufblasen
+  const ctx = c.getContext('2d'); ctx.setTransform(k, 0, 0, k, w * R / 2 - (b.x + b.w / 2) * k, h * R / 2 - (b.y + b.h / 2) * k);
+  drawItems(ctx, items, () => {});
+  return c;
+}
+function buildStatikPop() {
+  const fill = (box, list, w, h) => {
+    box.innerHTML = '';
+    for (const st of list) {
+      const b = document.createElement('button'); b.dataset.stamp = 's:' + st.id; b.title = st.title;
+      b.appendChild(statikThumb(statikItems(st.id, 20, '#1b1f24'), w, h));
+      const l = document.createElement('span'); l.textContent = st.title; b.appendChild(l);
+      b.classList.toggle('active', prefs.stamp === 's:' + st.id);
+      box.appendChild(b);
+    }
+  };
+  fill($('#statikSupports'), STATIK_SUPPORTS, 58, 40);
+  fill($('#statikSystems'), STATIK_SYSTEMS, 110, 46);
+}
+$('#statikPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-stamp]'); if (!b) return;
+  prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
+});
 $('#stampPop').addEventListener('click', e => {
   const del = e.target.closest('[data-del]');
   if (del) {
@@ -2795,6 +2876,8 @@ function updToolbar() {
   $('#btnHead').innerHTML = `<svg viewBox="0 0 24 24">${HEAD_ICONS[prefs.headForm || 'open']}</svg>`;
   $('#stampBox').hidden = t !== 'stamp';
   $('#btnStamp').textContent = stampLabel();
+  $('#btnStatik').classList.toggle('active', (prefs.stamp || '').startsWith('s:'));
+  $('#btnStatik').textContent = (prefs.stamp || '').startsWith('s:') ? (STATIK_SUPPORTS.concat(STATIK_SYSTEMS).find(x => 's:' + x.id === prefs.stamp)?.title || 'Statik') + ' ▾' : 'Statik ▾';
   if (S.note) renderCompass();
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
@@ -2914,6 +2997,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnBold') { const tx = selTexts(); if (!S.editing && tx.length) { const v = !tx[0].bold; styleSelTexts(i => (i.bold = v, i)); } else { prefs.bold = !prefs.bold; savePrefs(); updToolbar(); styleEditing('bold'); } }
   else if (b.id === 'btnImage') { commitText(); $('#fileImg').click(); }
   else if (b.id === 'btnStamp') { buildStampPop(); showPop($('#stampPop'), b); }
+  else if (b.id === 'btnStatik') { buildStatikPop(); showPop($('#statikPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
@@ -3675,7 +3759,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 49;
+const APP_VERSION = 50;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
