@@ -2658,6 +2658,10 @@ const STATIK_SYSTEMS = [
   { id: 'zweifeld', title: 'Zweifeldträger' }, { id: 'einsplos', title: 'Einseitig eingespannt' }, { id: 'beids', title: 'Beidseitig eingespannt' },
   { id: 'gerber', title: 'Gelenkträger (Gerber)' }, { id: 'zweigelenk', title: 'Zweigelenkrahmen' }, { id: 'dreigelenk', title: 'Dreigelenkrahmen' }
 ];
+const STATIK_LOADS = [
+  { id: 'F', title: 'Einzellast' }, { id: 'Fh', title: 'Horizontallast' }, { id: 'q', title: 'Streckenlast' }, { id: 'dreieck', title: 'Dreieckslast' },
+  { id: 'trapez', title: 'Trapezlast' }, { id: 'Mr', title: 'Moment rechtsdrehend' }, { id: 'Ml', title: 'Moment linksdrehend' }
+];
 function statikItems(id, s, color) {
   const thin = Math.max(1, s * 0.04), thick = Math.max(1.6, s * 0.08), out = [], late = [];
   const L = (pts, w = thin) => out.push(stampLine(pts.map(([x, y]) => [x * s, y * s]), color, w));
@@ -2677,6 +2681,23 @@ function statikItems(id, s, color) {
     for (let yy = y - 0.45 * k; yy <= y + 0.5 * k + 1e-6; yy += 0.19 * k) L([[x, yy], [x + dir * 0.17 * k, yy - 0.15 * k]]);
   };
   const beam = (x1, x2, y = 0) => L([[x1, y], [x2, y]], thick);
+  // Lastpfeil von (x1|y1) nach (x2|y2), Spitze gefüllt
+  const arr = (x1, y1, x2, y2, w = thin, hs = 0) => out.push({ t: 'shape', id: uid(), kind: 'arrow', x1: x1 * s, y1: y1 * s, x2: x2 * s, y2: y2 * s, color, size: w, hf: 'fill', hs });
+  // verteilte Last von xa bis xb, Höhe h(x) über dem Balken (Pfeilspitzen auf y = 0)
+  const dist = (xa, xb, h) => {
+    L([[xa, -h(xa)], [xb, -h(xb)]]);
+    if (h(xa) > 0.05) L([[xa, -h(xa)], [xa, 0]]);
+    const n = 8;
+    for (let i = 0; i <= n; i++) { const x = xa + (xb - xa) * i / n, hh = h(x); if (hh > 0.2) arr(x, -hh, x, 0); }
+  };
+  const moment = cw => {
+    const r = 0.55, a0 = 0.75 * Math.PI, a1 = 2.25 * Math.PI, P = a => [r * Math.cos(a), r * Math.sin(a)];
+    const pts = arcPts(0, 0, r, a0, a1, 32);
+    L(cw ? pts : pts.reverse());
+    const [e, b] = cw ? [a1, a1 - 0.35] : [a0, a0 + 0.35];
+    arr(...P(b), ...P(e), thin, 1);
+    late.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: -0.05 * s, y1: -0.05 * s, x2: 0.05 * s, y2: 0.05 * s, color, size: thin, fill: color, fillMode: 2 });
+  };
   const k = 0.75;
   switch (id) {
     case 'fest': tri(0, 0, 1, false); break;
@@ -2691,6 +2712,13 @@ function statikItems(id, s, color) {
     case 'einsplos': wall(-2, 0, k, -1); beam(-2, 2); tri(2, 0, k, true); break;
     case 'beids': wall(-2, 0, k, -1); wall(2, 0, k, 1); beam(-2, 2); break;
     case 'gerber': beam(-3, 3); tri(-3, 0, k); tri(-1, 0, k, true); tri(3, 0, k, true); hinge(0.8, 0, 0.09); break;
+    case 'F': arr(0, -1.4, 0, 0, thick, 1); break;
+    case 'Fh': arr(-1.4, 0, 0, 0, thick, 1); break;
+    case 'q': dist(-2, 2, () => 0.7); break;
+    case 'dreieck': dist(-2, 2, x => 0.05 + 0.95 * (x + 2) / 4); break;
+    case 'trapez': dist(-2, 2, x => 0.45 + 0.5 * (x + 2) / 4); break;
+    case 'Mr': moment(true); break;
+    case 'Ml': moment(false); break;
     case 'zweigelenk': case 'dreigelenk': {
       const top = -1.1, bot = 0.9;
       L([[-1.8, bot], [-1.8, top], [1.8, top], [1.8, bot]], thick);
@@ -2820,6 +2848,7 @@ function buildStatikPop() {
   };
   fill($('#statikSupports'), STATIK_SUPPORTS, 58, 40);
   fill($('#statikSystems'), STATIK_SYSTEMS, 110, 46);
+  fill($('#statikLoads'), STATIK_LOADS, 80, 44);
 }
 $('#statikPop').addEventListener('click', e => {
   const b = e.target.closest('[data-stamp]'); if (!b) return;
@@ -2876,8 +2905,9 @@ function updToolbar() {
   $('#btnHead').innerHTML = `<svg viewBox="0 0 24 24">${HEAD_ICONS[prefs.headForm || 'open']}</svg>`;
   $('#stampBox').hidden = t !== 'stamp';
   $('#btnStamp').textContent = stampLabel();
+  $('#btnStatik').hidden = !addonOn('statik');
   $('#btnStatik').classList.toggle('active', (prefs.stamp || '').startsWith('s:'));
-  $('#btnStatik').textContent = (prefs.stamp || '').startsWith('s:') ? (STATIK_SUPPORTS.concat(STATIK_SYSTEMS).find(x => 's:' + x.id === prefs.stamp)?.title || 'Statik') + ' ▾' : 'Statik ▾';
+  $('#btnStatik').textContent = (prefs.stamp || '').startsWith('s:') ? (STATIK_SUPPORTS.concat(STATIK_SYSTEMS, STATIK_LOADS).find(x => 's:' + x.id === prefs.stamp)?.title || 'Statik') + ' ▾' : 'Statik ▾';
   if (S.note) renderCompass();
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
@@ -3759,7 +3789,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 50;
+const APP_VERSION = 52;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -3819,7 +3849,29 @@ window.nativeUpdateProgress = pct => { if (pct >= 0) toast(`Update wird geladen 
 window.nativeUpdateFailed = msg => toast('Update nicht installiert: ' + msg, 6000);
 
 $('#btnUpdate').addEventListener('click', () => { hidePops(); checkForUpdates(true); });
-$('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? showPop($('#settingsPop'), e.currentTarget) : hidePops());
+$('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? (buildAddons(), showPop($('#settingsPop'), e.currentTarget)) : hidePops());
+/* Add-ons: Zusatzpakete, die man in den Einstellungen ein- und ausschalten kann (weitere einfach hier ergänzen) */
+var ADDONS = [   // var: wird schon beim Start (updToolbar) gebraucht
+  { id: 'statik', title: 'Statik (Bauwesen)', desc: 'Auflager, statische Systeme und Lasten als Stempel', def: true }
+];
+function addonOn(id) { return (prefs.addons || {})[id] ?? (ADDONS || []).find(a => a.id === id)?.def ?? true; }
+function buildAddons() {
+  const box = $('#addonList'); box.innerHTML = '';
+  for (const a of ADDONS) {
+    const l = document.createElement('label'); l.className = 'check';
+    l.innerHTML = `<input type="checkbox" data-addon="${a.id}"><span><b></b><small></small></span>`;
+    l.querySelector('b').textContent = a.title; l.querySelector('small').textContent = a.desc;
+    l.querySelector('input').checked = addonOn(a.id);
+    box.appendChild(l);
+  }
+}
+$('#addonList').addEventListener('change', e => {
+  const id = e.target.dataset.addon; if (!id) return;
+  prefs.addons = { ...(prefs.addons || {}), [id]: e.target.checked };
+  if (id === 'statik' && !e.target.checked && (prefs.stamp || '').startsWith('s:')) prefs.stamp = 'check';
+  savePrefs(); updToolbar();
+  toast(e.target.checked ? 'Add-on eingeschaltet.' : 'Add-on ausgeschaltet. Schon gesetzte Zeichen bleiben erhalten.');
+});
 $('#settingsPop').addEventListener('click', e => { if (e.target.closest('[data-s="update"]')) { hidePops(); checkForUpdates(true); } });
 // Updates von selbst suchen: beim Start und bei jedem Zurückwechseln in die App (höchstens alle 15 Sekunden – die Abfrage ist winzig).
 // Gefunden → oranger Knopf „Update x.y“ oben (bleibt), dazu einmal pro App-Start das Hinweisfenster.

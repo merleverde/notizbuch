@@ -515,3 +515,8 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 }
 .popover .statik-grid button.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .statik-grid canvas { display: block; }
+.statik-grid.load { grid-template-columns: repeat(4, 1fr); }
+/* Einstellungen: Add-ons */
+.addon-title { padding: 4px 12px 0; }
+#addonList .check { align-items: flex-start; }
+#addonList small { display: block; color: var(--muted); font-size: .78rem; }
