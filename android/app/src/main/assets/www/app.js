@@ -3916,7 +3916,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 54;
+const APP_VERSION = 55;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4002,7 +4002,130 @@ $('#addonList').addEventListener('change', e => {
   savePrefs(); updToolbar();
   toast(e.target.checked ? 'Add-on eingeschaltet.' : 'Add-on ausgeschaltet. Schon gesetzte Zeichen bleiben erhalten.');
 });
-$('#settingsPop').addEventListener('click', e => { if (e.target.closest('[data-s="update"]')) { hidePops(); checkForUpdates(true); } });
+$('#settingsPop').addEventListener('click', e => {
+  const s = e.target.closest('[data-s]')?.dataset.s; if (!s) return;
+  hidePops();
+  if (s === 'update') checkForUpdates(true);
+  else if (s === 'tutorial') openTutorial();
+  else if (s === 'news') showNews(Object.keys(CHANGELOG).sort((a, b) => verCmp(b, a)), 'Neuigkeiten');
+});
+/* ---------------- Kurzanleitung ---------------- */
+const TUTORIAL = [
+  { t: 'Willkommen im Notizbuch', i: '#btnSettings', h: `<p>Diese Kurzanleitung zeigt dir alle Funktionen. Mit <b>Weiter</b> blätterst du, <b>Schließen</b> beendet sie jederzeit – du findest sie wieder unter ⚙ → Kurzanleitung.</p>
+    <h3>Die Übersicht</h3><ul>
+    <li><b>Neue Notiz</b> legt ein leeres Heft an, <b>PDF öffnen</b> holt eine PDF (z. B. aus Nextcloud) zum Beschreiben.</li>
+    <li><b>Suche</b> findet Notizen nach ihrem Titel.</li>
+    <li><b>Ordner</b>: oben steht der Pfad (z. B. Alle Notizen › Uni › Mathe) – antippen springt zurück. Darunter die Unterordner und „+ Ordner“. Ordner lassen sich beliebig tief verschachteln.</li>
+    <li><b>⋯ neben dem Ordnernamen</b>: Unterordner anlegen, umbenennen, verschieben, löschen (der Inhalt rutscht eine Ebene nach oben).</li>
+    <li><b>⋯ an einer Notiz</b>: umbenennen, in einen Ordner verschieben oder kopieren, löschen.</li></ul>` },
+  { t: 'Schreiben mit dem Stift', i: '[data-tool="pen"]', h: `<ul>
+    <li><b>Doppelt auf den Stift tippen</b> öffnet die Stiftarten (Füller, Kugelschreiber, Bleistift, Pinsel, Kalligrafie) und ein Farbband mit 10 Farben plus eigener Farbe (+).</li>
+    <li>Die <b>Strichstärke</b> wählst du mit den drei Punkten oder dem Regler. Lange auf einen Punkt drücken speichert die aktuelle Stärke darauf.</li>
+    <li>Jedes Werkzeug merkt sich <b>seine eigene Farbe</b>.</li>
+    <li><b>Form erkennen</b>: Am Ende eines Strichs den Stift kurz halten – aus der Kritzelei wird eine saubere Linie, ein Kreis oder ein Rechteck.</li>
+    <li><b>Lineal</b>: Jeder Strich wird eine gerade Linie; Winkel und Länge werden angezeigt.</li>
+    <li><b>S Pen-Taste</b> gedrückt halten = Radierer. <b>Kritzeln</b> über Geschriebenes löscht es (abschaltbar im Menü ⋮).</li>
+    <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist.</li></ul>` },
+  { t: 'Textmarker und Zauberstift', i: '[data-tool="marker"]', h: `<h3>Textmarker</h3><ul>
+    <li>Legt sich standardmäßig <b>hinter</b> die Schrift, damit sie lesbar bleibt (Knopf in der Leiste).</li>
+    <li>Die <b>Transparenz</b> stellst du mit dem Regler-Knopf ein.</li>
+    <li>Auf PDF-Seiten rastet er an den Textzeilen ein.</li></ul>
+    <h3>Zauberstift</h3><ul>
+    <li>Farbe und Stärke wählen, dann über Striche, Formen oder Text fahren – sie übernehmen den Stil.</li></ul>` },
+  { t: 'Radierer', i: '[data-tool="eraser"]', h: `<ul>
+    <li><b>Bereich</b>: löscht nur, was unter dem Radierer liegt – auch Teile von Formen und Linien.</li>
+    <li><b>Ganze Striche</b>: ein Strich wird komplett gelöscht.</li>
+    <li><b>Abdecken</b>: übermalt mit Papierweiß – auch Schrift aus anderen Apps in einer PDF.</li>
+    <li>Tippst du nach dem Radieren eine Farbe an, bist du sofort wieder beim letzten Stift.</li></ul>` },
+  { t: 'Lasso: auswählen und bearbeiten', i: '[data-tool="lasso"]', h: `<ul>
+    <li>Um Objekte herumfahren – markiert wird nur, was <b>vollständig</b> im Lasso liegt. Einzelnes Antippen markiert ein Objekt.</li>
+    <li><b>Griffe</b>: Ecken = Größe (Seitenverhältnis bleibt), Seiten = nur Breite oder Höhe, oberer Kreis = drehen. Bei Linien und Pfeilen ziehst du direkt die Enden.</li>
+    <li><b>Verschieben</b>, auch auf eine andere Seite – am Rand scrollt es mit.</li>
+    <li>Leiste: <b>Text/Formel bearbeiten</b>, Stil ändern, Ebene, Kopieren, Ausschneiden, Duplizieren, Als Stempel, Löschen.</li>
+    <li>Ist Text markiert, ändern Größe, Schriftart und Fett oben in der Leiste <b>nur diesen Text</b>.</li>
+    <li>Farbe antippen färbt die Auswahl um.</li></ul>` },
+  { t: 'Text und Formeln', i: '[data-tool="text"]', h: `<ul>
+    <li>Mit dem Text-Werkzeug auf das Blatt tippen und schreiben. Vorhandenen Text antippen bearbeitet ihn.</li>
+    <li><b>Größe</b> 4 bis 44, <b>Schriftart</b> (Standard, Serif, Schreibmaschine, Schreibschrift) und <b>Fett</b>.</li>
+    <li><b>∑ Formel</b>: Mathe in LaTeX eingeben (z. B. \\frac{a}{b}), mit Tasten für häufige Zeichen. Formel antippen bearbeitet sie wieder.</li></ul>` },
+  { t: 'Formen und Zirkel', i: '[data-tool="shape"]', h: `<ul>
+    <li>Rechteck, Ellipse, Dreieck, Linie und Pfeil aufziehen. Linien rasten bei 0°, 45° und 90° ein.</li>
+    <li><b>Pfeilspitze</b>: Form (offen, gefüllt, spitz) und Größe (klein, mittel, groß).</li>
+    <li><b>Füllung</b> aus, hell (20 %) oder voll; <b>gestrichelte</b> Linie.</li>
+    <li><b>Zirkel</b>: Mittelpunkt setzen, Radius ziehen, dann am Kreis herumfahren – rastet bei Viertel-, Halb- und Vollkreis ein.</li></ul>` },
+  { t: 'Stempel und Add-ons', i: '[data-tool="stamp"]', h: `<ul>
+    <li><b>Stempel ▾</b>: Häkchen, Kreuz, Stern, Smileys, Datum, „Erledigt“ – und deine eigenen (etwas mit dem Lasso markieren → „Als Stempel“).</li>
+    <li><b>Statik ▾</b>: Auflager, statische Systeme und Lasten. Auflager und Lasten sitzen mit dem Anschlusspunkt dort, wo du tippst.</li>
+    <li><b>Stahl ▾</b>: Querschnitte von IPE, HEA, HEB, U, L, T, Z, Rohren, Rund- und Flachstahl.</li>
+    <li><b>Mathe ▾</b>: 2D- und 3D-Koordinatensysteme und Polarkoordinaten.</li>
+    <li>Größe über den Regler. Alles besteht aus normalen Linien und Texten – du kannst es also verschieben, ändern und radieren.</li>
+    <li>Die Pakete Statik, Stahl und Mathe sind <b>Add-ons</b>: unter ⚙ → Add-ons einzeln ein- und ausschaltbar.</li></ul>` },
+  { t: 'Seiten, Bilder und Ansicht', i: '#btnImage', h: `<ul>
+    <li><b>Bild</b> einfügen und danach mit dem Lasso verschieben, drehen und skalieren.</li>
+    <li><b>Seitenübersicht</b> (Kachel-Knopf oben): Seiten anspringen, Lesezeichen sehen.</li>
+    <li><b>Menü ⋮</b>: Seite einfügen, duplizieren, löschen, Hintergrund (blanko, liniert, kariert, Punkte …), PDF-Seiten einfügen, Lesezeichen.</li>
+    <li><b>Zoomen</b> mit zwei Fingern, <b>scrollen</b> mit dem Finger (Schwung geht weiter). Im Menü: „Mit dem Finger zeichnen“ und „Zoom zurücksetzen“.</li>
+    <li><b>Rückgängig / Wiederholen</b> mit den Pfeilen oben.</li></ul>` },
+  { t: 'Speichern, Sicherung und Updates', i: '#btnSave', h: `<ul>
+    <li><b>Als PDF speichern</b> bzw. <b>Speichern</b> schreibt die Notiz als PDF, z. B. direkt in Nextcloud. Eine geöffnete PDF wird überschrieben; „Speichern unter …“ legt eine neue Datei an.</li>
+    <li>„Schrift in der PDF bearbeitbar halten“: Beim nächsten Öffnen in der App kannst du alles weiter bearbeiten.</li>
+    <li>Ein orangefarbenes „nicht gespeichert“ zeigt Änderungen, die noch nicht in der Datei sind.</li>
+    <li><b>Sicherung</b> (Übersicht oben): alle Notizen in eine Datei sichern und wiederherstellen.</li>
+    <li><b>Updates</b> sucht die App beim Öffnen von selbst; ein oranger Knopf zeigt eine neue Version. Danach kannst du dir die Neuigkeiten zeigen lassen.</li></ul>` }
+];
+let tutPage = 0;
+function renderTut() {
+  const p = TUTORIAL[tutPage];
+  $('#tutTitle').textContent = p.t;
+  $('#tutBody').innerHTML = p.h; $('#tutBody').scrollTop = 0;
+  const ic = p.i && document.querySelector(p.i + ' svg');
+  $('#tutIcon').innerHTML = ic ? ic.outerHTML : '';
+  $('#tutDots').innerHTML = TUTORIAL.map((_, i) => `<i class="${i === tutPage ? 'on' : ''}"></i>`).join('');
+  $('#tutDlg [data-t="prev"]').disabled = tutPage === 0;
+  $('#tutDlg [data-t="next"]').textContent = tutPage === TUTORIAL.length - 1 ? 'Fertig' : 'Weiter';
+}
+function openTutorial() { tutPage = 0; renderTut(); $('#tutDlg').showModal(); }
+$('#tutDlg').addEventListener('click', e => {
+  const a = e.target.closest('[data-t]')?.dataset.t; if (!a) return;
+  if (a === 'close' || (a === 'next' && tutPage === TUTORIAL.length - 1)) return $('#tutDlg').close();
+  tutPage = clamp(tutPage + (a === 'next' ? 1 : -1), 0, TUTORIAL.length - 1); renderTut();
+});
+
+/* ---------------- Neuigkeiten nach einem Update ---------------- */
+const CHANGELOG = {
+  '3.9': ['Kurzanleitung mit allen Funktionen (⚙ → Kurzanleitung)', 'Nach einem Update werden die Neuigkeiten angeboten – nur wenn du möchtest'],
+  '3.8': ['Add-on Mathematik: 2D- und 3D-Koordinatensysteme, Polarkoordinaten'],
+  '3.7': ['Add-on Stahlbauprofile: IPE, HEA, HEB, U, L, T, Z, Rohre, Rund- und Flachstahl'],
+  '3.6': ['Statik: Lasten (Einzellast, Strecken-, Dreiecks-, Trapezlast, Momente)', 'Einstellungen → Add-ons: Pakete ein- und ausschalten'],
+  '3.5': ['Statik-Stempel: Auflager und statische Systeme'],
+  '3.4': ['Ordner beliebig tief verschachteln, Pfadzeile oben', 'Notizen in Ordner verschieben oder kopieren'],
+  '3.3': ['Text in gespeicherten PDFs ist nicht mehr blass'],
+  '3.2': ['Schriftarten für Text', 'Größe und Schrift von markiertem Text genau einstellen'],
+  '3.1': ['Stift-Menü mit Farbband', 'Pfeilspitzen in 3 Formen und 3 Größen', 'Lasso markiert nur vollständig umfahrene Objekte', 'Text ab Größe 4, „Text bearbeiten“ in der Auswahl'],
+  '3.0': ['Griffe an allen Ecken und Seiten, Linien an beiden Enden ziehen']
+};
+const verCmp = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+function newsSince(from, to) { return Object.keys(CHANGELOG).filter(v => (!from || verCmp(v, from) > 0) && verCmp(v, to) <= 0).sort((a, b) => verCmp(b, a)); }
+function showNews(vers, title) {
+  $('#newsTitle').textContent = title;
+  $('#newsBody').innerHTML = vers.map(v => `<h3>Version ${v}</h3><ul>${CHANGELOG[v].map(x => `<li>${x}</li>`).join('')}</ul>`).join('');
+  $('#newsDlg').showModal();
+}
+$('#newsDlg').addEventListener('click', e => { if (e.target.closest('[data-n]')) $('#newsDlg').close(); });
+async function offerNews() {
+  if (!NATIVE) return;
+  const cur = window.NATIVE_APP.version, last = prefs.seenVersion;
+  if (last === cur) return;
+  prefs.seenVersion = cur; savePrefs();
+  // erster Start nach Einführung dieser Funktion: wer schon Notizen hat, hat gerade aktualisiert
+  const from = last || ((await dbAll('notes')).length ? '3.8' : null);
+  if (!from) return;
+  const vers = newsSince(from, cur); if (!vers.length) return;
+  $('#newsAskMsg').textContent = `Die App ist jetzt auf Version ${cur}. Möchtest du kurz sehen, was neu ist?`;
+  if (await dialogChoice($('#newsAskDlg'), 'na') === 'yes') showNews(vers, `Neu seit Version ${from}`);
+}
+setTimeout(offerNews, 1200);
+
 // Updates von selbst suchen: beim Start und bei jedem Zurückwechseln in die App (höchstens alle 15 Sekunden – die Abfrage ist winzig).
 // Gefunden → oranger Knopf „Update x.y“ oben (bleibt), dazu einmal pro App-Start das Hinweisfenster.
 // „Später“ schließt nur das Fenster. Während gerade geschrieben wird, wartet die Prüfung.

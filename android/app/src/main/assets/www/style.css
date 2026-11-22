@@ -522,3 +522,20 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 #addonList small { display: block; color: var(--muted); font-size: .78rem; }
 .statik-grid.prof { grid-template-columns: repeat(4, 1fr); }
 #btnStatik, #btnStahl, #btnMathe { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Kurzanleitung und Neuigkeiten */
+dialog.tut-dlg { width: min(620px, calc(100vw - 32px)); }
+.tut-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.tut-head h2 { margin: 0; }
+.tut-icon { width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: none; }
+.tut-icon:empty { display: none; }
+.tut-icon svg { width: 24px; height: 24px; }
+.tut-body { max-height: 58vh; overflow-y: auto; font-size: .95rem; line-height: 1.45; }
+.tut-body ul { margin: 6px 0 12px; padding-left: 20px; }
+.tut-body li { margin: 4px 0; }
+.tut-body h3 { font-size: 1rem; margin: 14px 0 4px; }
+.tut-body h3:first-child { margin-top: 0; }
+.tut-body p { margin: 4px 0 10px; }
+.tut-dots { display: flex; justify-content: center; gap: 6px; margin: 12px 0; }
+.tut-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.tut-dots i.on { background: var(--accent); }

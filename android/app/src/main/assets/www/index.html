@@ -312,10 +312,40 @@
 
 <div id="settingsPop" class="popover" hidden>
   <button data-s="update"><span><b>Nach Updates suchen</b><br><small id="settingsVersion"></small></span></button>
+  <button data-s="tutorial"><span><b>Kurzanleitung</b><br><small>Alle Funktionen Schritt für Schritt</small></span></button>
+  <button data-s="news"><span><b>Neuigkeiten</b><br><small>Was sich in den letzten Versionen geändert hat</small></span></button>
   <hr>
   <div class="style-title addon-title">Add-ons</div>
   <div id="addonList"></div>
 </div>
+
+<dialog id="tutDlg" class="tut-dlg">
+  <div class="tut-head"><span id="tutIcon" class="tut-icon"></span><h2 id="tutTitle"></h2></div>
+  <div id="tutBody" class="tut-body"></div>
+  <div id="tutDots" class="tut-dots"></div>
+  <div class="dlg-actions">
+    <button data-t="close" class="btn">Schließen</button>
+    <button data-t="prev" class="btn">Zurück</button>
+    <button data-t="next" class="btn primary">Weiter</button>
+  </div>
+</dialog>
+
+<dialog id="newsDlg" class="tut-dlg">
+  <h2 id="newsTitle">Neuigkeiten</h2>
+  <div id="newsBody" class="tut-body"></div>
+  <div class="dlg-actions">
+    <button data-n="close" class="btn primary">Schließen</button>
+  </div>
+</dialog>
+
+<dialog id="newsAskDlg">
+  <h2>Notizbuch wurde aktualisiert</h2>
+  <p id="newsAskMsg"></p>
+  <div class="dlg-actions">
+    <button data-na="no" class="btn">Nein, danke</button>
+    <button data-na="yes" class="btn primary">Neuigkeiten zeigen</button>
+  </div>
+</dialog>
 
 <dialog id="permDlg">
   <h2>Originaldatei neu auswählen</h2>
