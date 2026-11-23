@@ -387,12 +387,49 @@ function drawItems(ctx, items, onImg) {
       else ctx.drawImage(im, it.x, it.y, it.w, it.h);
     }
     else if (it.t === 'shape') drawShape(ctx, it);
+    else if (it.t === 'table') drawTable(ctx, it);
     else if (it.t === 'stroke') drawStroke(ctx, it);
     // Text liegt in derselben Ebenenfolge; das gerade bearbeitete Textfeld zeigt das Eingabefeld selbst
     else if (it.t === 'text' && !(S.editing && S.editing.it.id === it.id)) drawText(ctx, it);
   }
 }
 
+/* Tabelle: Rahmen, Gitter, optional Kopfzeile (fett, leicht hinterlegt); Text pro Zelle mit Zeilenumbruch */
+function drawTable(ctx, it) {
+  const { x, y, w, h, rows, cols } = it, lw = it.lw || 1;
+  const cw = it.cw || Array(cols).fill(1 / cols), rh = it.rh || Array(rows).fill(1 / rows);
+  const xs = [x], ys = [y];
+  cw.forEach(f => xs.push(xs[xs.length - 1] + f * w)); rh.forEach(f => ys.push(ys[ys.length - 1] + f * h));
+  ctx.save();
+  if (it.header && rows > 1) { ctx.fillStyle = fillFor(it.color, 1); ctx.fillRect(x, y, w, ys[1] - y); }
+  ctx.strokeStyle = it.color; ctx.lineWidth = lw; ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ys.forEach(yy => { ctx.moveTo(x, yy); ctx.lineTo(x + w, yy); });
+  xs.forEach(xx => { ctx.moveTo(xx, y); ctx.lineTo(xx, y + h); });
+  ctx.stroke();
+  ctx.fillStyle = it.color; ctx.textBaseline = 'alphabetic';
+  const pad = Math.max(2, it.size * 0.3), lh = it.size * 1.25;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const txt = it.cells?.[r]?.[c]; if (!txt) continue;
+    const bold = it.header && r === 0;
+    ctx.font = `${bold ? 700 : 400} ${it.size}px ${FONT}`;
+    const cx0 = xs[c] + pad, cwid = xs[c + 1] - xs[c] - 2 * pad, ch = ys[r + 1] - ys[r];
+    const lines = [];
+    for (const para of String(txt).split(/\n/)) {
+      let line = '';
+      for (const word of para.split(/(\s+)/)) {
+        const test = line + word;
+        if (line.trim() && ctx.measureText(test.trimEnd()).width > cwid) { lines.push(line.trimEnd()); line = word.trimStart(); } else line = test;
+      }
+      lines.push(line.trimEnd());
+    }
+    ctx.save(); ctx.beginPath(); ctx.rect(xs[c], ys[r], xs[c + 1] - xs[c], ch); ctx.clip();
+    let ty = ys[r] + Math.max(pad, (ch - lines.length * lh) / 2) + it.size * 0.95;
+    for (const l of lines) { ctx.fillText(l, cx0, ty); ty += lh; }
+    ctx.restore();
+  }
+  ctx.restore();
+}
 function drawText(ctx, it) {
   ctx.save();
   ctx.fillStyle = it.color; ctx.font = `${it.bold ? 700 : 400} ${it.size}px ${fontOf(it)}`; ctx.textBaseline = 'alphabetic';
@@ -434,6 +471,7 @@ function bbox(it) {
     return { x: Math.min(it.x1, it.x2) - m, y: Math.min(it.y1, it.y2) - m, w: Math.abs(it.x2 - it.x1) + 2 * m, h: Math.abs(it.y2 - it.y1) + 2 * m };
   }
   if (it.t === 'text') return { x: it.x, y: it.y, w: it.w, h: it.h || it.size * 1.35 };
+  if (it.t === 'table') { const m = (it.lw || 1) / 2; return { x: it.x - m, y: it.y - m, w: it.w + 2 * m, h: it.h + 2 * m }; }
   if (it.rot) {
     const c = Math.abs(Math.cos(it.rot)), s = Math.abs(Math.sin(it.rot)), w = it.w * c + it.h * s, h = it.w * s + it.h * c;
     return { x: it.x + it.w / 2 - w / 2, y: it.y + it.h / 2 - h / 2, w, h };
@@ -486,11 +524,12 @@ function xform(src, fn, k, da = 0, kx = k, ky = k) {
     else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); }
   } else {
     // Bild/Text: Mittelpunkt mitführen; Bilder drehen sich mit, Textfelder bleiben gerade
-    const h0 = it.t === 'img' ? it.h : (it.h || it.size * 1.35);
+    const h0 = it.t === 'img' || it.t === 'table' ? it.h : (it.h || it.size * 1.35);
     const [cx, cy] = fn(it.x + it.w / 2, it.y + h0 / 2);
     let h1 = h0;
     it.w *= kx;
     if (it.t === 'img') { it.h *= ky; h1 = it.h; if (da) it.rot = ((it.rot || 0) + da) % (Math.PI * 2); }
+    else if (it.t === 'table') { it.h *= ky; h1 = it.h; if (kx === ky) it.size *= k; }   // Tabelle bleibt gerade, Schrift wächst nur gleichmäßig
     else if (kx === ky) { it.size *= k; if (it.h) it.h *= k; h1 = h0 * k; }   // Text: nur gleichmäßig wächst die Schrift
     it.x = cx - it.w / 2; it.y = cy - h1 / 2;
   }
@@ -991,7 +1030,7 @@ class PdfCtx {
     this.cur = {};
   }
 }
-const needsRaster = it => it.t === 'text' || (it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain);
+const needsRaster = it => it.t === 'text' || it.t === 'table' || (it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain);
 function dataUrlBytes(url) { return b64decode(url.slice(url.indexOf(',') + 1)); }
 
 /* Ausschnitt mit den übergebenen Elementen als PNG rendern (für Bleistift und Text) */
@@ -1796,6 +1835,7 @@ function restyleItem(it) {
   if (it.t === 'img' && !isFormula(it)) return null;
   if (it.tool === 'cover') return null;
   const c = { ...it };
+  if (c.t === 'table') { if (col && c.color !== col) { c.color = col; return c; } return null; }
   if (col && c.color !== col) {
     if (isFormula(c)) {
       const i = c.src.indexOf(',') + 1, svg = decodeURIComponent(c.src.slice(i));
@@ -2257,7 +2297,7 @@ function renderSel() {
     ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -2277,8 +2317,9 @@ function renderSel() {
   });
   el.querySelector('.selbar').addEventListener('click', e => {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
-    if (a === 'formula') openFormula(p, items[0]);
+    if (a === 'formula') { if (items[0].matrix) openGrid('matrix', p, items[0]); else openFormula(p, items[0]); }
     else if (a === 'edittext') editTextItem(p, items[0]);
+    else if (a === 'edittable') openGrid('table', p, items[0]);
     else if (a === 'stamp') saveSelAsStamp();
     else if (a === 'style') openStylePop(btn);
     else if (a === 'layer') showPop($('#layerPop'), btn);
@@ -2734,6 +2775,97 @@ function finishFormula() {
   refreshPage(p); commit(p, before);
   setSel({ p, ids: new Set([it.id]) });
 }
+/* ---------------- Tabellen und Matrizen: gemeinsames Eingabefenster ---------------- */
+let gridCtx = null;
+function gridValues() { return [...$('#gridCells').querySelectorAll('input')].reduce((a, inp) => { (a[+inp.dataset.r] ||= [])[+inp.dataset.c] = inp.value; return a; }, []); }
+function buildGridInputs(keep) {
+  const R = clamp(+$('#gridRows').value || 1, 1, gridCtx.kind === 'table' ? 30 : 8), C = clamp(+$('#gridCols').value || 1, 1, gridCtx.kind === 'table' ? 12 : 8);
+  const box = $('#gridCells'); box.innerHTML = '';
+  box.style.gridTemplateColumns = `repeat(${C}, minmax(${gridCtx.kind === 'table' ? 90 : 70}px, 1fr))`;
+  const head = gridCtx.kind === 'table' && $('#gridHead').checked;
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    const inp = document.createElement('input'); inp.dataset.r = r; inp.dataset.c = c;
+    inp.value = keep?.[r]?.[c] ?? '';
+    if (gridCtx.kind === 'matrix') inp.placeholder = `a_{${r + 1}${c + 1}}`;
+    else if (head && r === 0) { inp.placeholder = `Spalte ${c + 1}`; inp.classList.add('head'); }
+    box.appendChild(inp);
+  }
+}
+function openGrid(kind, p, it = null) {
+  if (!p) return;
+  commitText();
+  gridCtx = { kind, p, it };
+  const mx = kind === 'matrix', src = mx ? it?.matrix : it;
+  $('#gridTitle').textContent = (it ? (mx ? 'Matrix bearbeiten' : 'Tabelle bearbeiten') : (mx ? 'Matrix einfügen' : 'Tabelle einfügen'));
+  $('#gridOk').textContent = it ? 'Übernehmen' : 'Einfügen';
+  $('#gridRows').max = mx ? 8 : 30; $('#gridCols').max = mx ? 8 : 12;
+  $('#gridRows').value = src?.rows || 3; $('#gridCols').value = src?.cols || 3;
+  $('#gridHeadWrap').hidden = mx; $('#gridBrWrap').hidden = !mx;
+  if (!mx) $('#gridHead').checked = it ? !!it.header : true;
+  if (mx) $('#gridBr').value = src?.kind || 'pmatrix';
+  $('#gridHint').textContent = mx
+    ? 'Einträge in LaTeX möglich, z. B. x^2, \\frac{1}{2}, \\alpha. Leere Felder bekommen a₁₁, a₁₂ … (wie im grauen Platzhalter).'
+    : 'Die Zellen kannst du gleich hier ausfüllen oder leer lassen und später über „Tabelle bearbeiten“ ändern. Größe und Spaltenbreite danach mit dem Lasso ziehen.';
+  buildGridInputs(src?.cells);
+  $('#gridDlg').showModal();
+  setTimeout(() => $('#gridCells input')?.focus(), 50);
+}
+['gridRows', 'gridCols', 'gridHead'].forEach(id => $('#' + id).addEventListener('change', () => buildGridInputs(gridValues())));
+$('#gridDlg').addEventListener('click', async e => {
+  const a = e.target.closest('[data-g]')?.dataset.g; if (!a) return;
+  if (a === 'cancel') { $('#gridDlg').close(); gridCtx = null; return; }
+  const ctx = gridCtx; $('#gridDlg').close(); gridCtx = null; if (!ctx) return;
+  const R = clamp(+$('#gridRows').value || 1, 1, ctx.kind === 'table' ? 30 : 8), C = clamp(+$('#gridCols').value || 1, 1, ctx.kind === 'table' ? 12 : 8);
+  const vals = gridValues(), cells = Array.from({ length: R }, (_, r) => Array.from({ length: C }, (_, c) => (vals[r]?.[c] ?? '').trim()));
+  if (ctx.kind === 'table') finishTable(ctx, R, C, cells, $('#gridHead').checked);
+  else await finishMatrix(ctx, R, C, cells, $('#gridBr').value);
+});
+function finishTable(ctx, R, C, cells, header) {
+  const { p } = ctx, pe = pageEls.get(p.id), before = snap(p);
+  let it;
+  if (ctx.it) {
+    const o = ctx.it, rowH = o.h / o.rows;
+    it = { ...o, rows: R, cols: C, cells, header, h: rowH * R, cw: o.cols === C ? o.cw : null, rh: o.rows === R ? o.rh : null };
+    if (o.cols !== C) it.w = o.w / o.cols * C;
+    const i = p.items.findIndex(x => x.id === o.id); if (i < 0) return;
+    p.items[i] = it;
+  } else {
+    const size = prefs.textSize, colW = Math.min(110, p.w * 0.9 / C), rowH = Math.round(size * 2);
+    const w = colW * C, h = rowH * R;
+    const rr = pe.el.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), k = rr.width / p.w;
+    const cy = clamp(((wr.top + wr.height / 2) - rr.top) / k, h / 2, p.h - h / 2);
+    it = { t: 'table', id: uid(), x: (p.w - w) / 2, y: cy - h / 2, w, h, rows: R, cols: C, cells, header, size, color: prefs.color, lw: 1 };
+    p.items.push(it);
+  }
+  setTool('lasso'); refreshPage(p); commit(p, before);
+  setSel({ p, ids: new Set([it.id]) });
+}
+async function finishMatrix(ctx, R, C, cells, kind) {
+  const filled = cells.map((row, r) => row.map((v, c) => v || `a_{${r + 1}${c + 1}}`));
+  const tex = `\\begin{${kind}} ${filled.map(row => row.join(' & ')).join(' \\\\ ')} \\end{${kind}}`;
+  try { await loadMathJax(); } catch (e) { return toast(e.message); }
+  const { p } = ctx, pe = pageEls.get(p.id), before = snap(p);
+  let r;
+  try { r = texToSvg(tex, ctx.it ? ctx.it.color : prefs.color); } catch (e) { return toast('Fehler in der Matrix: ' + e.message); }
+  const matrix = { rows: R, cols: C, kind, cells };
+  let it;
+  if (ctx.it) {
+    const old = ctx.it, fs = old.h / old.mh, w = r.ew * fs, h = r.eh * fs;
+    it = { ...old, src: r.src, tex, mh: r.eh, matrix, x: old.x + old.w / 2 - w / 2, y: old.y + old.h / 2 - h / 2, w, h };
+    const i = p.items.findIndex(o => o.id === old.id); if (i < 0) return;
+    p.items[i] = it;
+  } else {
+    const fs = prefs.textSize * 1.25; let w = r.ew * fs, h = r.eh * fs;
+    if (w > p.w * 0.9) { const k = p.w * 0.9 / w; w *= k; h *= k; }
+    const rr = pe.el.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), k = rr.width / p.w;
+    const cy = clamp(((wr.top + wr.height / 2) - rr.top) / k, h / 2, p.h - h / 2);
+    it = { t: 'img', id: uid(), x: (p.w - w) / 2, y: cy - h / 2, w, h, src: r.src, tex, color: prefs.color, mh: r.eh, matrix };
+    p.items.push(it);
+  }
+  setTool('lasso'); refreshPage(p); commit(p, before);
+  setSel({ p, ids: new Set([it.id]) });
+}
+$('#btnMatrix').addEventListener('click', () => { hidePops(); if (S.note) openGrid('matrix', currentPage()); });
 /* SVG-Formel für die PDF als PNG in hoher Auflösung (ca. 450 dpi) */
 async function svgToPng(src, w, h) {
   const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Formel-Bild')); i.src = src; });
@@ -3342,6 +3474,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnMathe') { buildMathePop(); showPop($('#mathePop'), b); }
   else if (b.id === 'btnFluss') { buildFlussPop(); showPop($('#flussPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
+  else if (b.id === 'btnTable') { if (S.note) openGrid('table', currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
 $('#sizePresets').addEventListener('pointerdown', e => {
@@ -3394,6 +3527,7 @@ $('#menuPop').addEventListener('click', async e => {
   if (m === 'addPage') addPage();
   else if (m === 'dupPage') duplicatePage();
   else if (m === 'bgPage') openBgDlg();
+  else if (m === 'table') openGrid('table', currentPage());
   else if (m === 'paste') pasteClip();
   else if (m === 'insPdf') pickInsertPdf();
   else if (m === 'mark') toggleMark();
@@ -4102,7 +4236,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 57;
+const APP_VERSION = 58;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4235,6 +4369,7 @@ const TUTORIAL = [
   { t: 'Text und Formeln', i: '[data-tool="text"]', h: `<ul>
     <li>Mit dem Text-Werkzeug auf das Blatt tippen und schreiben. Vorhandenen Text antippen bearbeitet ihn.</li>
     <li><b>Größe</b> 4 bis 44, <b>Schriftart</b> (Standard, Serif, Schreibmaschine, Schreibschrift) und <b>Fett</b>.</li>
+    <li><b>▦ Tabelle</b>: Zeilen, Spalten und Kopfzeile wählen und die Zellen gleich ausfüllen. Markierte Tabelle → „Tabelle bearbeiten“ ändert Inhalt und Größe; mit dem Lasso an Ecken und Seiten breiter oder höher ziehen.</li>
     <li><b>∑ Formel</b>: Mathe in LaTeX eingeben (z. B. \\frac{a}{b}), mit Tasten für häufige Zeichen. Formel antippen bearbeitet sie wieder.</li></ul>` },
   { t: 'Formen und Zirkel', i: '[data-tool="shape"]', h: `<ul>
     <li>Rechteck, Ellipse, Dreieck, Linie und Pfeil aufziehen. Linien rasten bei 0°, 45° und 90° ein.</li>
@@ -4245,7 +4380,7 @@ const TUTORIAL = [
     <li><b>Stempel ▾</b>: Häkchen, Kreuz, Stern, Smileys, Datum, „Erledigt“ – und deine eigenen (etwas mit dem Lasso markieren → „Als Stempel“).</li>
     <li><b>Statik ▾</b>: Auflager, statische Systeme und Lasten. Auflager und Lasten sitzen mit dem Anschlusspunkt dort, wo du tippst.</li>
     <li><b>Stahl ▾</b>: Querschnitte von IPE, HEA, HEB, U, L, T, Z, Rohren, Rund- und Flachstahl.</li>
-    <li><b>Mathe ▾</b>: 2D- und 3D-Koordinatensysteme und Polarkoordinaten.</li>
+    <li><b>Mathe ▾</b>: 2D- und 3D-Koordinatensysteme, Polarkoordinaten und „Matrix einfügen …“ (Größe und Klammern frei wählbar, Einträge in LaTeX).</li>
     <li><b>Fluss ▾</b>: Flussdiagramm-Symbole wie in yEd (Prozess, Entscheidung, Start/Ende, Daten, Dokument, Datenbank …). Text mit dem Text-Werkzeug hinein, Verbindungen mit Pfeilen.</li>
     <li>Größe über den Regler. Alles besteht aus normalen Linien und Texten – du kannst es also verschieben, ändern und radieren.</li>
     <li>Die Pakete Statik, Stahl, Mathe und Fluss sind <b>Add-ons</b>: unter ⚙ → Add-ons einzeln ein- und ausschaltbar.</li></ul>` },
@@ -4282,6 +4417,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.2': ['Tabellen wie in LibreOffice: Zeilen, Spalten und Kopfzeile wählen, Zellen ausfüllen, später über „Tabelle bearbeiten“ ändern (▦ Tabelle beim Text-Werkzeug oder im Menü ⋮)', 'Mathe: Matrizen beliebiger Größe (bis 8×8) mit runden, eckigen, Betrags- oder geschweiften Klammern'],
   '4.1': ['Smarte Hilfslinien: Beim Verschieben und Skalieren rasten Objekte an Kanten und Mitten anderer Objekte und an der Seitenmitte ein (im Menü ⋮ abschaltbar)', 'Ausrichten: markierte Objekte links, mittig, rechts, oben, unten ausrichten oder gleichmäßig verteilen'],
   '4.0': ['Add-on Flussdiagramm: 27 Symbole wie in yEd (Prozess, Entscheidung, Start/Ende, Daten, Dokument, Datenbank …)'],
   '3.9': ['Kurzanleitung mit allen Funktionen (⚙ → Kurzanleitung)', 'Nach einem Update werden die Neuigkeiten angeboten – nur wenn du möchtest'],

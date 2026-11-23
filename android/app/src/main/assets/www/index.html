@@ -155,6 +155,7 @@
       </select>
       <button id="btnBold" title="Fett"><b>F</b></button>
       <button id="btnFormula" title="Mathe-Formel in LaTeX schreiben">∑ Formel</button>
+      <button id="btnTable" title="Tabelle einfügen: Zeilen und Spalten wählen">▦ Tabelle</button>
     </div>
   </div>
 
@@ -183,6 +184,7 @@
     <button data-m="addPage">Seite einfügen</button>
     <button data-m="dupPage">Aktuelle Seite duplizieren</button>
     <button data-m="bgPage">Hintergrund ändern …</button>
+    <button data-m="table">Tabelle einfügen …</button>
     <button data-m="insPdf">PDF-Seiten einfügen …</button>
     <button data-m="mark">Lesezeichen an/aus</button>
     <button data-m="paste">Einfügen</button>
@@ -224,6 +226,7 @@
 <div id="mathePop" class="popover statik-pop" hidden aria-label="Mathe-Stempel">
   <div class="style-title">Koordinatensysteme</div>
   <div id="matheGrid" class="statik-grid prof"></div>
+  <button id="btnMatrix" class="btn matrix-btn">[ ] Matrix einfügen … (Größe und Klammern wählen)</button>
   <p class="stamp-hint">Der Ursprung (bzw. Mittelpunkt) liegt dort, wo du tippst. Größe über den Regler; Beschriftungen sind normale Texte und lassen sich ändern.</p>
 </div>
 <div id="flussPop" class="popover statik-pop fluss-pop" hidden aria-label="Flussdiagramm">
@@ -367,6 +370,27 @@
   <div class="dlg-actions">
     <button data-na="no" class="btn">Nein, danke</button>
     <button data-na="yes" class="btn primary">Neuigkeiten zeigen</button>
+  </div>
+</dialog>
+
+<dialog id="gridDlg" class="grid-dlg">
+  <h2 id="gridTitle">Tabelle einfügen</h2>
+  <div class="grid-opts">
+    <label>Zeilen <input type="number" id="gridRows" min="1" max="30" value="3"></label>
+    <label>Spalten <input type="number" id="gridCols" min="1" max="12" value="3"></label>
+    <label id="gridHeadWrap" class="check"><input type="checkbox" id="gridHead" checked> Kopfzeile</label>
+    <label id="gridBrWrap">Klammern
+      <select id="gridBr">
+        <option value="pmatrix">( runde )</option><option value="bmatrix">[ eckige ]</option>
+        <option value="vmatrix">| Determinante |</option><option value="Vmatrix">‖ Norm ‖</option>
+        <option value="Bmatrix">{ geschweifte }</option><option value="matrix">ohne</option>
+      </select></label>
+  </div>
+  <p id="gridHint" class="dlg-note"></p>
+  <div id="gridCells" class="grid-cells"></div>
+  <div class="dlg-actions">
+    <button data-g="cancel" class="btn">Abbrechen</button>
+    <button data-g="ok" id="gridOk" class="btn primary">Einfügen</button>
   </div>
 </dialog>
 
