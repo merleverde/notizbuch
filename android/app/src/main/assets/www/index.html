@@ -193,6 +193,7 @@
     <hr>
     <label class="check"><input type="checkbox" id="optFinger"> Mit dem Finger zeichnen</label>
     <label class="check"><input type="checkbox" id="optScribble"> Kritzeln löscht Geschriebenes</label>
+    <label class="check"><input type="checkbox" id="optGuides"> Hilfslinien und Einrasten beim Verschieben</label>
     <label class="check">Striche glätten
       <select id="optSmooth" aria-label="Striche glätten">
         <option value="0">Aus</option><option value="1">Mittel</option><option value="2">Stark</option>
@@ -229,6 +230,22 @@
   <div class="style-title">Flussdiagramm (wie in yEd)</div>
   <div id="flussGrid" class="statik-grid fluss"></div>
   <p class="stamp-hint">Das Symbol wird mittig dort gesetzt, wo du tippst. Text mit dem Text-Werkzeug hineinschreiben; Verbindungen mit Linie oder Pfeil (Formen). Mit dem Lasso an Ecken und Seiten auf die passende Größe ziehen.</p>
+</div>
+<div id="alignPop" class="popover align-pop" hidden aria-label="Ausrichten">
+  <div class="style-title">Ausrichten</div>
+  <div class="align-grid">
+    <button data-al="left" title="Links ausrichten"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 3v18"/><rect x="7" y="6" width="12" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/></svg><span>Links</span></button>
+    <button data-al="hcenter" title="Waagrecht zentrieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/></svg><span>Mitte</span></button>
+    <button data-al="right" title="Rechts ausrichten"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 3v18"/><rect x="5" y="6" width="12" height="4" rx="1"/><rect x="10" y="14" width="7" height="4" rx="1"/></svg><span>Rechts</span></button>
+    <button data-al="top" title="Oben ausrichten"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 4h18"/><rect x="6" y="7" width="4" height="12" rx="1"/><rect x="14" y="7" width="4" height="7" rx="1"/></svg><span>Oben</span></button>
+    <button data-al="vcenter" title="Senkrecht zentrieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/></svg><span>Mitte</span></button>
+    <button data-al="bottom" title="Unten ausrichten"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 20h18"/><rect x="6" y="5" width="4" height="12" rx="1"/><rect x="14" y="10" width="4" height="7" rx="1"/></svg><span>Unten</span></button>
+  </div>
+  <div class="align-row">
+    <button data-al="hdist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 4v16M21 4v16"/><rect x="9" y="8" width="6" height="8" rx="1"/></svg><span>Waagrecht verteilen</span></button>
+    <button data-al="vdist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 3h16M4 21h16"/><rect x="8" y="9" width="8" height="6" rx="1"/></svg><span>Senkrecht verteilen</span></button>
+  </div>
+  <p id="alignHint" class="stamp-hint"></p>
 </div>
 <div id="stampPop" class="popover stamp-pop" hidden aria-label="Stempel">
   <div class="style-title">Stempel</div>

@@ -1918,10 +1918,32 @@ function moveAct(e) {
     const { ax, ay } = act;
     // Nenner mit Vorzeichen (links/oben ist er negativ), aber nie fast 0
     const den = v => Math.sign(v || 1) * Math.max(1, Math.abs(v));
-    if (act.axis === 'x') { const f = Math.max(0.05, (x - ax) / den(act.x0 - ax)); applySel((a, b) => [ax + (a - ax) * f, b], 1, 0, f, 1); }
-    else { const f = Math.max(0.05, (y - ay) / den(act.y0 - ay)); applySel((a, b) => [a, ay + (b - ay) * f], 1, 0, 1, f); }
+    const b0 = origBox(act), thr = 7 / act.k, gd = guidesOn() && getGuides(act);
+    if (act.axis === 'x') {
+      let f = Math.max(0.05, (x - ax) / den(act.x0 - ax));
+      const e0 = Math.abs(b0.x - ax) < 1e-6 ? b0.x + b0.w : b0.x, g = gd && bestSnap([ax + (e0 - ax) * f], gd.xs, thr);
+      if (g) f = Math.max(0.05, (g.t.v - ax) / den(e0 - ax));
+      if (gd) { const l = Math.min(ax, ax + (e0 - ax) * f); drawGuides(act, { x: l, y: b0.y, w: Math.abs(e0 - ax) * f, h: b0.h }, g, null); }
+      applySel((a, b) => [ax + (a - ax) * f, b], 1, 0, f, 1);
+    } else {
+      let f = Math.max(0.05, (y - ay) / den(act.y0 - ay));
+      const e0 = Math.abs(b0.y - ay) < 1e-6 ? b0.y + b0.h : b0.y, g = gd && bestSnap([ay + (e0 - ay) * f], gd.ys, thr);
+      if (g) f = Math.max(0.05, (g.t.v - ay) / den(e0 - ay));
+      if (gd) { const t = Math.min(ay, ay + (e0 - ay) * f); drawGuides(act, { x: b0.x, y: t, w: b0.w, h: Math.abs(e0 - ay) * f }, null, g); }
+      applySel((a, b) => [a, ay + (b - ay) * f], 1, 0, 1, f);
+    }
   } else if (t === 'scale') {
-    const { ax, ay } = act, f = Math.max(0.08, Math.hypot(x - ax, y - ay) / act.d0);
+    const { ax, ay } = act; let f = Math.max(0.08, Math.hypot(x - ax, y - ay) / act.d0);
+    if (guidesOn()) {
+      const b0 = origBox(act), gd = getGuides(act), thr = 7 / act.k;
+      const ex0 = Math.abs(b0.x - ax) < 1e-6 ? b0.x + b0.w : b0.x, ey0 = Math.abs(b0.y - ay) < 1e-6 ? b0.y + b0.h : b0.y;
+      const gx = bestSnap([ax + (ex0 - ax) * f], gd.xs, thr), gy = bestSnap([ay + (ey0 - ay) * f], gd.ys, thr);
+      const use = gx && (!gy || Math.abs(gx.d) <= Math.abs(gy.d)) ? 'x' : gy ? 'y' : null;
+      if (use === 'x' && Math.abs(ex0 - ax) > 1) f = Math.max(0.08, (gx.t.v - ax) / (ex0 - ax));
+      if (use === 'y' && Math.abs(ey0 - ay) > 1) f = Math.max(0.08, (gy.t.v - ay) / (ey0 - ay));
+      const nx = [ax, ax + (ex0 - ax) * f], ny = [ay, ay + (ey0 - ay) * f];
+      drawGuides(act, { x: Math.min(...nx), y: Math.min(...ny), w: Math.abs(nx[1] - nx[0]), h: Math.abs(ny[1] - ny[0]) }, use === 'x' ? gx : null, use === 'y' ? gy : null);
+    }
     applySel((a, b) => [ax + (a - ax) * f, ay + (b - ay) * f], f);
   } else if (t === 'lineEnd') {
     // Linienende ziehen: das andere Ende bleibt stehen, rastet bei 0°/45°/90° ein
@@ -2129,6 +2151,7 @@ function endAct(e) {
   } else if (tool === 'text') {
     if (e.type === 'pointerup') textTap(p, a.x0, a.y0);
   } else if (tool === 'move' || tool === 'scale' || tool === 'rotate' || tool === 'lineEnd') {
+    clearGuides();
     if (a.ctx) a.ctx.clearRect(0, 0, p.w, p.h);
     if (a.befores) commitMulti(a.befores); else commit(p, a.before);
     renderSel();
@@ -2234,7 +2257,7 @@ function renderSel() {
     ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? '<button data-a="formula">Formel bearbeiten</button>' : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -2259,10 +2282,43 @@ function renderSel() {
     else if (a === 'stamp') saveSelAsStamp();
     else if (a === 'style') openStylePop(btn);
     else if (a === 'layer') showPop($('#layerPop'), btn);
+    else if (a === 'align') { $('#alignHint').textContent = alignUnits().length < 2 ? 'Nur ein Objekt markiert: es wird an der Seite ausgerichtet.' : 'Die markierten Objekte werden aneinander ausgerichtet.'; showPop($('#alignPop'), btn); }
     else selAction(a);
   });
   pageEls.get(p.id).el.appendChild(el);
 }
+/* ---- Smarte Hilfslinien: beim Verschieben/Skalieren an Kanten und Mitten anderer Objekte (und der Seitenmitte) einrasten ---- */
+const guidesOn = () => prefs.guides !== false;
+function guideTargets(p, excl) {
+  const boxes = p.items.filter(it => !excl.has(it.id) && (it.t !== 'stroke' || it.style === 'shape')).map(visBox);
+  const xs = [], ys = [];
+  for (const b of boxes) {
+    xs.push({ v: b.x, b }, { v: b.x + b.w / 2, b }, { v: b.x + b.w, b });
+    ys.push({ v: b.y, b }, { v: b.y + b.h / 2, b }, { v: b.y + b.h, b });
+  }
+  const pg = { x: 0, y: 0, w: p.w, h: p.h };
+  xs.push({ v: p.w / 2, b: pg }); ys.push({ v: p.h / 2, b: pg });
+  return { xs, ys };
+}
+function getGuides(a) {
+  if (!a.gt || a.gtPage !== a.p.id) { a.gt = guideTargets(a.p, a.orig); a.gtPage = a.p.id; }
+  return a.gt;
+}
+// beste Übereinstimmung: einer der Werte vals (Kanten/Mitte der Auswahl) nahe an einer Ziellinie
+function bestSnap(vals, list, thr) {
+  let best = null;
+  for (const [i, v] of vals.entries()) for (const t of list) { const d = t.v - v; if (Math.abs(d) <= thr && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, i, t }; }
+  return best;
+}
+function clearGuides(pe) { (pe?.el || document).querySelectorAll('.guide').forEach(n => n.remove()); }
+function drawGuides(a, box, gx, gy) {
+  clearGuides(a.pe); if (!gx && !gy) return;
+  const sc = scale(), pad = 8;
+  const mk = (cls, st) => { const d = document.createElement('div'); d.className = 'guide ' + cls; Object.assign(d.style, st); a.pe.el.appendChild(d); };
+  if (gx) { const t = Math.min(box.y, gx.t.b.y) - pad, bt = Math.max(box.y + box.h, gx.t.b.y + gx.t.b.h) + pad; mk('v', { left: gx.t.v * sc + 'px', top: t * sc + 'px', height: (bt - t) * sc + 'px' }); }
+  if (gy) { const l = Math.min(box.x, gy.t.b.x) - pad, r = Math.max(box.x + box.w, gy.t.b.x + gy.t.b.w) + pad; mk('h', { top: gy.t.v * sc + 'px', left: l * sc + 'px', width: (r - l) * sc + 'px' }); }
+}
+const origBox = a => (a.ob ||= unionBox([...a.orig.values()].map(bbox)));
 /* ---- Auswahl verschieben, auch über Seitengrenzen ---- */
 let asRaf = 0;
 function autoScrollTick() {
@@ -2284,7 +2340,15 @@ function moveSelTo(cx, cy) {
   const q = pageUnder(cx, cy);
   if (q && q !== act.p) moveSelToPage(q);
   act.rect = act.pe.el.getBoundingClientRect(); act.k = act.rect.width / act.p.w;   // Lage ändert sich beim Scrollen
-  const [x, y] = toPageA(cx, cy), dx = x - act.x0, dy = y - act.y0;
+  const [x, y] = toPageA(cx, cy);
+  let dx = x - act.x0, dy = y - act.y0;
+  if (guidesOn()) {
+    const g = getGuides(act), b = origBox(act), thr = 7 / act.k;
+    const gx = bestSnap([b.x + dx, b.x + dx + b.w / 2, b.x + dx + b.w], g.xs, thr);
+    const gy = bestSnap([b.y + dy, b.y + dy + b.h / 2, b.y + dy + b.h], g.ys, thr);
+    if (gx) dx += gx.d; if (gy) dy += gy.d;
+    drawGuides(act, { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }, gx, gy);
+  }
   applySel((a, b) => [a + dx, b + dy], 1);
 }
 /* Die gezogene Auswahl wechselt auf Seite q: Elemente umziehen, Koordinaten umrechnen, Verlauf beider Seiten merken */
@@ -2300,7 +2364,8 @@ function moveSelToPage(q) {
   q.items = [...q.items, ...moving.map(tr)];
   a.orig = new Map([...a.orig].map(([id, it]) => [id, tr(it)]));
   a.x0 += ox; a.y0 += oy;
-  Object.assign(a, { p: q, pe: qe, rect: rq, k, lastBox: null });
+  Object.assign(a, { p: q, pe: qe, rect: rq, k, lastBox: null, ob: null });
+  clearGuides();
   S.sel = { p: q, ids: S.sel.ids };
   refreshPage(p); refreshPage(q); renderSel();
 }
@@ -2313,6 +2378,55 @@ function applySel(fn, k, da = 0, kx = k, ky = k, direct = null) {
   act.lastBox = now;
   if (!pe.selRaf) pe.selRaf = requestAnimationFrame(() => { pe.selRaf = 0; renderText(pe, p); renderSel(); });
 }
+/* ---- Ausrichten: markierte Objekte aneinander (oder an der Seite) ausrichten und verteilen ----
+   Zusammengehöriges bleibt zusammen: Elemente, die sich berühren (z. B. Buchstaben eines Wortes, Teile eines Stempels),
+   werden als eine Einheit bewegt – außer ein Element liegt ganz in einem anderen (z. B. Text in einem Kasten). */
+// sichtbare Fläche: bei Text die tatsächliche Schriftbreite statt der Breite des Textfelds
+function visBox(it) {
+  const b = bbox(it); if (it.t !== 'text') return b;
+  const mc = (visBox.mc ||= document.createElement('canvas').getContext('2d'));
+  mc.font = `${it.bold ? 700 : 400} ${it.size}px ${fontOf(it)}`;
+  const w = Math.max(...it.text.split(/\n/).map(l => mc.measureText(l).width), 1);
+  return { ...b, w: Math.min(b.w, w + 2) };
+}
+function alignUnits() {
+  if (!S.sel) return [];
+  const items = S.sel.p.items.filter(i => S.sel.ids.has(i.id)), bx = items.map(visBox), n = items.length;
+  const par = items.map((_, i) => i), find = i => par[i] === i ? i : (par[i] = find(par[i]));
+  const m = 4, touch = (a, b) => a.x - m <= b.x + b.w && b.x - m <= a.x + a.w && a.y - m <= b.y + b.h && b.y - m <= a.y + a.h;
+  const inside = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++)
+    if (touch(bx[i], bx[j]) && !inside(bx[i], bx[j]) && !inside(bx[j], bx[i])) par[find(i)] = find(j);
+  const groups = new Map();
+  items.forEach((it, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(it); });
+  return [...groups.values()].map(g => ({ items: g, b: unionBox(g.map(visBox)) }));
+}
+function alignSel(mode) {
+  const units = alignUnits(); if (!units.length) return;
+  const { p } = S.sel, before = snap(p);
+  const ref = units.length < 2 ? { x: 0, y: 0, w: p.w, h: p.h } : unionBox(units.map(u => u.b));
+  const moves = new Map();
+  if (mode === 'hdist' || mode === 'vdist') {
+    if (units.length < 3) return toast('Zum Verteilen mindestens drei Objekte markieren.');
+    const h = mode === 'hdist', key = u => h ? u.b.x + u.b.w / 2 : u.b.y + u.b.h / 2;
+    const us = [...units].sort((a, b) => key(a) - key(b));
+    const total = us.reduce((s, u) => s + (h ? u.b.w : u.b.h), 0), span = h ? ref.w : ref.h, gap = (span - total) / (us.length - 1);
+    let pos = h ? ref.x : ref.y;
+    for (const u of us) { moves.set(u, h ? [pos - u.b.x, 0] : [0, pos - u.b.y]); pos += (h ? u.b.w : u.b.h) + gap; }
+  } else {
+    for (const u of units) {
+      const b = u.b;
+      const d = { left: [ref.x - b.x, 0], right: [ref.x + ref.w - b.x - b.w, 0], hcenter: [ref.x + ref.w / 2 - b.x - b.w / 2, 0],
+        top: [0, ref.y - b.y], bottom: [0, ref.y + ref.h - b.y - b.h], vcenter: [0, ref.y + ref.h / 2 - b.y - b.h / 2] }[mode];
+      moves.set(u, d);
+    }
+  }
+  const mv = new Map();
+  for (const [u, [dx, dy]] of moves) for (const it of u.items) mv.set(it.id, [dx, dy]);
+  p.items = p.items.map(it => { const d = mv.get(it.id); return d && (d[0] || d[1]) ? { ...xform(it, (a, b) => [a + d[0], b + d[1]], 1), id: it.id } : it; });
+  refreshPage(p); commit(p, before); renderSel();
+}
+$('#alignPop').addEventListener('click', e => { const b = e.target.closest('[data-al]'); if (b) alignSel(b.dataset.al); });
 function selAction(a) {
   if (!S.sel) return;
   const { p, ids } = S.sel, before = snap(p);
@@ -3118,6 +3232,7 @@ function updToolbar() {
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
   $('#optScribble').checked = prefs.scribble !== false;
+  $('#optGuides').checked = prefs.guides !== false;
   $('#textOpts').hidden = t !== 'text' && !selTexts().length;
   document.querySelectorAll('[data-emode]').forEach(b => b.classList.toggle('active', b.dataset.emode === prefs.emode));
   document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('active', b.dataset.shape === prefs.shape));
@@ -3188,6 +3303,7 @@ $('#headPop').addEventListener('click', e => {
 });
 $('#optSmooth').addEventListener('change', e => { prefs.smoothing = +e.target.value; savePrefs(); });
 $('#optScribble').addEventListener('change', e => { prefs.scribble = e.target.checked; savePrefs(); });
+$('#optGuides').addEventListener('change', e => { prefs.guides = e.target.checked; savePrefs(); });
 $('#toolbar').addEventListener('pointerdown', e => { if (S.editing && e.target.closest('button,select,input')) e.preventDefault(); });
 $('#toolbar').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -3986,7 +4102,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 56;
+const APP_VERSION = 57;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4111,7 +4227,8 @@ const TUTORIAL = [
   { t: 'Lasso: auswählen und bearbeiten', i: '[data-tool="lasso"]', h: `<ul>
     <li>Um Objekte herumfahren – markiert wird nur, was <b>vollständig</b> im Lasso liegt. Einzelnes Antippen markiert ein Objekt.</li>
     <li><b>Griffe</b>: Ecken = Größe (Seitenverhältnis bleibt), Seiten = nur Breite oder Höhe, oberer Kreis = drehen. Bei Linien und Pfeilen ziehst du direkt die Enden.</li>
-    <li><b>Verschieben</b>, auch auf eine andere Seite – am Rand scrollt es mit.</li>
+    <li><b>Verschieben</b>, auch auf eine andere Seite – am Rand scrollt es mit. Dabei erscheinen kurz <b>Hilfslinien</b> (pink), wenn eine Kante oder Mitte auf einer Linie mit einem anderen Objekt oder der Seitenmitte liegt – das Objekt rastet dort ein. Abschaltbar im Menü ⋮.</li>
+    <li><b>Ausrichten</b> (in der Leiste): mehrere markierte Objekte links, mittig, rechts, oben oder unten aneinander ausrichten oder gleichmäßig verteilen. Ein einzelnes Objekt wird an der Seite ausgerichtet.</li>
     <li>Leiste: <b>Text/Formel bearbeiten</b>, Stil ändern, Ebene, Kopieren, Ausschneiden, Duplizieren, Als Stempel, Löschen.</li>
     <li>Ist Text markiert, ändern Größe, Schriftart und Fett oben in der Leiste <b>nur diesen Text</b>.</li>
     <li>Farbe antippen färbt die Auswahl um.</li></ul>` },
@@ -4165,6 +4282,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.1': ['Smarte Hilfslinien: Beim Verschieben und Skalieren rasten Objekte an Kanten und Mitten anderer Objekte und an der Seitenmitte ein (im Menü ⋮ abschaltbar)', 'Ausrichten: markierte Objekte links, mittig, rechts, oben, unten ausrichten oder gleichmäßig verteilen'],
   '4.0': ['Add-on Flussdiagramm: 27 Symbole wie in yEd (Prozess, Entscheidung, Start/Ende, Daten, Dokument, Datenbank …)'],
   '3.9': ['Kurzanleitung mit allen Funktionen (⚙ → Kurzanleitung)', 'Nach einem Update werden die Neuigkeiten angeboten – nur wenn du möchtest'],
   '3.8': ['Add-on Mathematik: 2D- und 3D-Koordinatensysteme, Polarkoordinaten'],
