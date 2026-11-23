@@ -521,7 +521,7 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 #addonList .check { align-items: flex-start; }
 #addonList small { display: block; color: var(--muted); font-size: .78rem; }
 .statik-grid.prof { grid-template-columns: repeat(4, 1fr); }
-#btnStatik, #btnStahl, #btnMathe { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#btnStatik, #btnStahl, #btnMathe, #btnFluss { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Kurzanleitung und Neuigkeiten */
 dialog.tut-dlg { width: min(620px, calc(100vw - 32px)); }
@@ -539,3 +539,7 @@ dialog.tut-dlg { width: min(620px, calc(100vw - 32px)); }
 .tut-dots { display: flex; justify-content: center; gap: 6px; margin: 12px 0; }
 .tut-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .tut-dots i.on { background: var(--accent); }
+.fluss-pop { width: 540px; }
+.statik-grid button { min-width: 0; }
+.statik-grid button span { overflow-wrap: anywhere; hyphens: auto; }
+.statik-grid.fluss { grid-template-columns: repeat(5, minmax(0, 1fr)); }

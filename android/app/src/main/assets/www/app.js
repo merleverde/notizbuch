@@ -2821,6 +2821,58 @@ function matheItems(id, s, color) {
   }
   return out;
 }
+/* Flussdiagramm-Symbole nach der yEd-Palette „Flowchart“. Mitte bei (0|0), Breite 2s, Höhe s */
+const FLUSS_SHAPES = [
+  { id: 'process', title: 'Prozess' }, { id: 'decision', title: 'Entscheidung' }, { id: 'terminator', title: 'Start / Ende' },
+  { id: 'data', title: 'Daten (Ein-/Ausgabe)' }, { id: 'predefined', title: 'Unterprogramm' }, { id: 'document', title: 'Dokument' },
+  { id: 'multidoc', title: 'Mehrere Dokumente' }, { id: 'manualInput', title: 'Manuelle Eingabe' }, { id: 'manualOp', title: 'Manuelle Tätigkeit' },
+  { id: 'preparation', title: 'Vorbereitung' }, { id: 'display', title: 'Anzeige' }, { id: 'delay', title: 'Verzögerung' },
+  { id: 'loopLimit', title: 'Schleifengrenze' }, { id: 'connector', title: 'Verbinder' }, { id: 'offPage', title: 'Seitenverweis' },
+  { id: 'database', title: 'Datenbank' }, { id: 'storedData', title: 'Gespeicherte Daten' }, { id: 'internal', title: 'Interner Speicher' },
+  { id: 'card', title: 'Karte' }, { id: 'tape', title: 'Lochstreifen' }, { id: 'merge', title: 'Zusammenführen' },
+  { id: 'extract', title: 'Extrahieren' }, { id: 'sort', title: 'Sortieren' }, { id: 'collate', title: 'Zusammenstellen' },
+  { id: 'sum', title: 'Summierung' }, { id: 'or', title: 'Oder' }, { id: 'annotation', title: 'Anmerkung' }
+];
+function flussItems(id, s, color) {
+  const lw = Math.max(1.1, s * 0.045), out = [];
+  const sc = pts => pts.map(([x, y]) => [+(x * s).toFixed(2), +(y * s).toFixed(2)]);
+  const P = (pts, white) => out.push({ t: 'shape', id: uid(), kind: 'poly', pts: sc(pts), color, size: lw, ...(white ? { fill: '#ffffff', fillMode: 2 } : {}) });
+  const L = pts => out.push(stampLine(sc(pts), color, lw));
+  const E = (cx, cy, rx, ry) => out.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: (cx - rx) * s, y1: (cy - ry) * s, x2: (cx + rx) * s, y2: (cy + ry) * s, color, size: lw });
+  const arc = (cx, cy, rx, ry, a0, a1, n = 18) => Array.from({ length: n + 1 }, (_, i) => { const t = (a0 + (a1 - a0) * i / n) * Math.PI / 180; return [cx + rx * Math.cos(t), cy + ry * Math.sin(t)]; });
+  const wave = (x0, x1, y, amp, n = 24) => Array.from({ length: n + 1 }, (_, i) => { const x = x0 + (x1 - x0) * i / n; return [x, y + amp * Math.sin(Math.PI * x)]; });
+  const doc = (dx, dy, white) => P([[-1 + dx, -0.5 + dy], [1 + dx, -0.5 + dy], ...wave(1, -1, 0.36, 0.12).map(([x, y]) => [x + dx, y + dy])], white);
+  switch (id) {
+    case 'process': P([[-1, -0.5], [1, -0.5], [1, 0.5], [-1, 0.5]]); break;
+    case 'decision': P([[0, -0.6], [1, 0], [0, 0.6], [-1, 0]]); break;
+    case 'terminator': P([...arc(0.5, 0, 0.5, 0.5, -90, 90), ...arc(-0.5, 0, 0.5, 0.5, 90, 270)]); break;
+    case 'data': P([[-0.75, -0.5], [1, -0.5], [0.75, 0.5], [-1, 0.5]]); break;
+    case 'predefined': P([[-1, -0.5], [1, -0.5], [1, 0.5], [-1, 0.5]]); L([[-0.85, -0.5], [-0.85, 0.5]]); L([[0.85, -0.5], [0.85, 0.5]]); break;
+    case 'document': doc(0, 0); break;
+    case 'multidoc': doc(0.16, -0.16, true); doc(0.08, -0.08, true); doc(0, 0, true); break;
+    case 'manualInput': P([[-1, -0.2], [1, -0.5], [1, 0.5], [-1, 0.5]]); break;
+    case 'manualOp': P([[-1, -0.5], [1, -0.5], [0.75, 0.5], [-0.75, 0.5]]); break;
+    case 'preparation': P([[-1, 0], [-0.75, -0.5], [0.75, -0.5], [1, 0], [0.75, 0.5], [-0.75, 0.5]]); break;
+    case 'display': P([[-1, 0], [-0.7, -0.5], [0.6, -0.5], ...arc(0.6, 0, 0.4, 0.5, -90, 90).slice(1, -1), [0.6, 0.5], [-0.7, 0.5]]); break;
+    case 'delay': P([[-1, -0.5], [0.5, -0.5], ...arc(0.5, 0, 0.5, 0.5, -90, 90).slice(1, -1), [0.5, 0.5], [-1, 0.5]]); break;
+    case 'loopLimit': P([[-0.8, -0.5], [0.8, -0.5], [1, -0.3], [1, 0.5], [-1, 0.5], [-1, -0.3]]); break;
+    case 'connector': E(0, 0, 0.4, 0.4); break;
+    case 'offPage': P([[-0.6, -0.5], [0.6, -0.5], [0.6, 0.15], [0, 0.6], [-0.6, 0.15]]); break;
+    case 'database': P([...arc(0, -0.4, 0.7, 0.15, 180, 360), [0.7, 0.4], ...arc(0, 0.4, 0.7, 0.15, 0, 180).slice(1), [-0.7, -0.4]]); L(arc(0, -0.4, 0.7, 0.15, 0, 180)); break;
+    case 'storedData': P([[-0.8, -0.5], ...arc(1, 0, -0.2, 0.5, -90, 90), [-0.8, 0.5], ...arc(-0.8, 0, 0.2, 0.5, 90, 270).slice(1, -1)]); break;
+    case 'internal': P([[-1, -0.5], [1, -0.5], [1, 0.5], [-1, 0.5]]); L([[-0.78, -0.5], [-0.78, 0.5]]); L([[-1, -0.28], [1, -0.28]]); break;
+    case 'card': P([[-0.75, -0.5], [1, -0.5], [1, 0.5], [-1, 0.5], [-1, -0.25]]); break;
+    case 'tape': P([...wave(-1, 1, -0.4, -0.1), ...wave(1, -1, 0.4, -0.1)]); break;
+    case 'merge': P([[-0.7, -0.5], [0.7, -0.5], [0, 0.5]]); break;
+    case 'extract': P([[0, -0.5], [0.7, 0.5], [-0.7, 0.5]]); break;
+    case 'sort': P([[0, -0.6], [0.6, 0], [0, 0.6], [-0.6, 0]]); L([[-0.6, 0], [0.6, 0]]); break;
+    case 'collate': P([[-0.5, -0.5], [0.5, -0.5], [0, 0], [0.5, 0.5], [-0.5, 0.5], [0, 0]]); break;
+    case 'sum': { E(0, 0, 0.45, 0.45); const d = 0.45 * Math.SQRT1_2; L([[-d, -d], [d, d]]); L([[d, -d], [-d, d]]); break; }
+    case 'or': E(0, 0, 0.45, 0.45); L([[-0.45, 0], [0.45, 0]]); L([[0, -0.45], [0, 0.45]]); break;
+    case 'annotation': L([[-0.6, -0.5], [-1, -0.5], [-1, 0.5], [-0.6, 0.5]]); break;
+  }
+  return out;
+}
 const stampLine = (pts, color, size) => ({ t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts: pts.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) });
 const arcPts = (cx, cy, r, a0, a1, n = 24) => Array.from({ length: n + 1 }, (_, i) => { const t = a0 + (a1 - a0) * i / n; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; });
 /* Elemente eines Stempels, Mitte bei (0,0), Höhe etwa s */
@@ -2861,7 +2913,8 @@ function stampAt(x, y) {
   if (sel.startsWith('c:')) {
     const cs = customStamps().find(c => c.id === sel.slice(2)); if (!cs) return [];
     items = cs.items.map(i => ({ ...i, id: uid() }));
-  } else if (sel.startsWith('m:')) items = matheItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  } else if (sel.startsWith('f:')) items = flussItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
+  else if (sel.startsWith('m:')) items = matheItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
   else if (sel.startsWith('p:')) items = profileItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
   else if (sel.startsWith('s:')) items = statikItems(sel.slice(2), prefs.sizes.stamp || 32, prefs.color);
   else items = stampItems(sel, prefs.sizes.stamp || 32, prefs.color);
@@ -2919,7 +2972,7 @@ function buildStampPop() {
 function stampLabel() {
   const sel = prefs.stamp || 'check';
   if (sel.startsWith('c:')) return 'Eigener ▾';
-  if (/^[spm]:/.test(sel)) return 'Stempel ▾';
+  if (/^[spmf]:/.test(sel)) return 'Stempel ▾';
   return (STAMPS.find(s => s.id === sel)?.label || '✓') + ' ▾';
 }
 function statikThumb(items, w, h) {
@@ -2964,6 +3017,20 @@ function buildMathePop() {
     box.appendChild(b);
   }
 }
+function buildFlussPop() {
+  const box = $('#flussGrid'); box.innerHTML = '';
+  for (const st of FLUSS_SHAPES) {
+    const b = document.createElement('button'); b.dataset.stamp = 'f:' + st.id; b.title = st.title;
+    b.appendChild(statikThumb(flussItems(st.id, 20, '#1b1f24'), 64, 38));
+    const l = document.createElement('span'); l.textContent = st.title; b.appendChild(l);
+    b.classList.toggle('active', prefs.stamp === 'f:' + st.id);
+    box.appendChild(b);
+  }
+}
+$('#flussPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-stamp]'); if (!b) return;
+  prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
+});
 $('#mathePop').addEventListener('click', e => {
   const b = e.target.closest('[data-stamp]'); if (!b) return;
   prefs.stamp = b.dataset.stamp; savePrefs(); hidePops(); updToolbar();
@@ -3030,6 +3097,8 @@ function updToolbar() {
   $('#btnStatik').hidden = !addonOn('statik');
   $('#btnStahl').hidden = !addonOn('stahl');
   $('#btnMathe').hidden = !addonOn('mathe');
+  $('#btnFluss').hidden = !addonOn('fluss');
+  $('#btnFluss').classList.toggle('active', (prefs.stamp || '').startsWith('f:'));
   $('#btnMathe').classList.toggle('active', (prefs.stamp || '').startsWith('m:'));
   $('#btnStahl').classList.toggle('active', (prefs.stamp || '').startsWith('p:'));
   $('#btnStatik').classList.toggle('active', (prefs.stamp || '').startsWith('s:'));
@@ -3155,6 +3224,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnStatik') { buildStatikPop(); showPop($('#statikPop'), b); }
   else if (b.id === 'btnStahl') { buildStahlPop(); showPop($('#stahlPop'), b); }
   else if (b.id === 'btnMathe') { buildMathePop(); showPop($('#mathePop'), b); }
+  else if (b.id === 'btnFluss') { buildFlussPop(); showPop($('#flussPop'), b); }
   else if (b.id === 'btnFormula') { if (S.note) openFormula(currentPage()); }
 });
 let presetTimer = 0, presetSaved = false;
@@ -3916,7 +3986,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 55;
+const APP_VERSION = 56;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -3981,7 +4051,8 @@ $('#btnSettings').addEventListener('click', e => $('#settingsPop').hidden ? (bui
 var ADDONS = [   // var: wird schon beim Start (updToolbar) gebraucht
   { id: 'statik', title: 'Statik (Bauwesen)', desc: 'Auflager, statische Systeme und Lasten als Stempel', def: true },
   { id: 'stahl', title: 'Stahlbauprofile', desc: 'Querschnitte: IPE, HEA, HEB, U, L, T, Z, Rohre, Rund- und Flachstahl', def: true },
-  { id: 'mathe', title: 'Mathematik', desc: 'Koordinatensysteme (2D, 3D) und Polarkoordinaten als Stempel', def: true }
+  { id: 'mathe', title: 'Mathematik', desc: 'Koordinatensysteme (2D, 3D) und Polarkoordinaten als Stempel', def: true },
+  { id: 'fluss', title: 'Flussdiagramm', desc: 'Symbole wie in yEd: Prozess, Entscheidung, Start/Ende, Daten, Dokument …', def: true }
 ];
 function addonOn(id) { return (prefs.addons || {})[id] ?? (ADDONS || []).find(a => a.id === id)?.def ?? true; }
 function buildAddons() {
@@ -3997,7 +4068,7 @@ function buildAddons() {
 $('#addonList').addEventListener('change', e => {
   const id = e.target.dataset.addon; if (!id) return;
   prefs.addons = { ...(prefs.addons || {}), [id]: e.target.checked };
-  const pre = { statik: 's:', stahl: 'p:', mathe: 'm:' }[id];
+  const pre = { statik: 's:', stahl: 'p:', mathe: 'm:', fluss: 'f:' }[id];
   if (pre && !e.target.checked && (prefs.stamp || '').startsWith(pre)) prefs.stamp = 'check';
   savePrefs(); updToolbar();
   toast(e.target.checked ? 'Add-on eingeschaltet.' : 'Add-on ausgeschaltet. Schon gesetzte Zeichen bleiben erhalten.');
@@ -4058,8 +4129,9 @@ const TUTORIAL = [
     <li><b>Statik ▾</b>: Auflager, statische Systeme und Lasten. Auflager und Lasten sitzen mit dem Anschlusspunkt dort, wo du tippst.</li>
     <li><b>Stahl ▾</b>: Querschnitte von IPE, HEA, HEB, U, L, T, Z, Rohren, Rund- und Flachstahl.</li>
     <li><b>Mathe ▾</b>: 2D- und 3D-Koordinatensysteme und Polarkoordinaten.</li>
+    <li><b>Fluss ▾</b>: Flussdiagramm-Symbole wie in yEd (Prozess, Entscheidung, Start/Ende, Daten, Dokument, Datenbank …). Text mit dem Text-Werkzeug hinein, Verbindungen mit Pfeilen.</li>
     <li>Größe über den Regler. Alles besteht aus normalen Linien und Texten – du kannst es also verschieben, ändern und radieren.</li>
-    <li>Die Pakete Statik, Stahl und Mathe sind <b>Add-ons</b>: unter ⚙ → Add-ons einzeln ein- und ausschaltbar.</li></ul>` },
+    <li>Die Pakete Statik, Stahl, Mathe und Fluss sind <b>Add-ons</b>: unter ⚙ → Add-ons einzeln ein- und ausschaltbar.</li></ul>` },
   { t: 'Seiten, Bilder und Ansicht', i: '#btnImage', h: `<ul>
     <li><b>Bild</b> einfügen und danach mit dem Lasso verschieben, drehen und skalieren.</li>
     <li><b>Seitenübersicht</b> (Kachel-Knopf oben): Seiten anspringen, Lesezeichen sehen.</li>
@@ -4093,6 +4165,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.0': ['Add-on Flussdiagramm: 27 Symbole wie in yEd (Prozess, Entscheidung, Start/Ende, Daten, Dokument, Datenbank …)'],
   '3.9': ['Kurzanleitung mit allen Funktionen (⚙ → Kurzanleitung)', 'Nach einem Update werden die Neuigkeiten angeboten – nur wenn du möchtest'],
   '3.8': ['Add-on Mathematik: 2D- und 3D-Koordinatensysteme, Polarkoordinaten'],
   '3.7': ['Add-on Stahlbauprofile: IPE, HEA, HEB, U, L, T, Z, Rohre, Rund- und Flachstahl'],

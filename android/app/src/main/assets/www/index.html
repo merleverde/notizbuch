@@ -141,6 +141,7 @@
       <button id="btnStatik" title="Statik: Auflager und statische Systeme">Statik ▾</button>
       <button id="btnStahl" title="Stahlbauprofile (Querschnitte)">Stahl ▾</button>
       <button id="btnMathe" title="Mathematik: Koordinatensysteme">Mathe ▾</button>
+      <button id="btnFluss" title="Flussdiagramm-Symbole">Fluss ▾</button>
     </div>
     <div id="textOpts" class="seg" hidden>
       <select id="textSize" aria-label="Schriftgröße">
@@ -223,6 +224,11 @@
   <div class="style-title">Koordinatensysteme</div>
   <div id="matheGrid" class="statik-grid prof"></div>
   <p class="stamp-hint">Der Ursprung (bzw. Mittelpunkt) liegt dort, wo du tippst. Größe über den Regler; Beschriftungen sind normale Texte und lassen sich ändern.</p>
+</div>
+<div id="flussPop" class="popover statik-pop fluss-pop" hidden aria-label="Flussdiagramm">
+  <div class="style-title">Flussdiagramm (wie in yEd)</div>
+  <div id="flussGrid" class="statik-grid fluss"></div>
+  <p class="stamp-hint">Das Symbol wird mittig dort gesetzt, wo du tippst. Text mit dem Text-Werkzeug hineinschreiben; Verbindungen mit Linie oder Pfeil (Formen). Mit dem Lasso an Ecken und Seiten auf die passende Größe ziehen.</p>
 </div>
 <div id="stampPop" class="popover stamp-pop" hidden aria-label="Stempel">
   <div class="style-title">Stempel</div>
