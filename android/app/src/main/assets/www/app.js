@@ -1533,6 +1533,29 @@ function tapAt(cx, cy) {
   const p = pageAt(cx, cy);
   if (prefs.tool === 'lasso') { if (!p) return setSel(null); const [x, y] = toPage(p, cx, cy); tapSelect(p, x, y); }
   else if (prefs.tool === 'text' && p) { const [x, y] = toPage(p, cx, cy); textTap(p, x, y); }
+  else fingerSelect(p, cx, cy);
+}
+/* Mit dem Finger auf ein Objekt tippen (in jedem Werkzeug, auch wenn der Finger nicht zeichnet):
+   es wird ausgewählt und lässt sich dann mit dem Finger verschieben, skalieren und drehen.
+   Zusammengehöriges wird mit ausgewählt: Buchstaben eines Wortes bzw. alle Teile eines Stempels. */
+function fingerSelect(p, cx, cy) {
+  if (!p) return S.sel && setSel(null);
+  const [x, y] = toPage(p, cx, cy), r = 10 / scale();
+  const hit = [...p.items].reverse().find(it => it.tool !== 'cover' && hitItem(it, x, y, r));
+  if (!hit) return S.sel && setSel(null);
+  const hand = it => it.t === 'stroke' && it.style !== 'shape' && it.tool !== 'marker';
+  const pool = p.items.filter(it => it.tool !== 'cover' && hand(it) === hand(hit));
+  const m = 4, touch = (a, b) => a.x - m <= b.x + b.w && b.x - m <= a.x + a.w && a.y - m <= b.y + b.h && b.y - m <= a.y + a.h;
+  const box = new Map(pool.map(it => [it.id, visBox(it)])), ids = new Set([hit.id]), todo = [hit];
+  while (todo.length && ids.size < 400) {
+    const a = box.get(todo.pop().id);
+    for (const it of pool) {
+      if (ids.has(it.id)) continue;
+      const b = box.get(it.id);
+      if (touch(a, b)) { ids.add(it.id); todo.push(it); }
+    }
+  }
+  setSel({ p, ids });
 }
 
 /* Live-Ebene. Hinweis: den „desynchronized“-Modus von Chrome nicht verwenden. Auf Samsung-Tablets
@@ -4438,7 +4461,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 61;
+const APP_VERSION = 62;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4620,6 +4643,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.6': ['Mit dem Finger auf ein Objekt, einen Text, ein Bild oder einen Stempel tippen wählt es aus – auch wenn „Mit dem Finger zeichnen“ aus ist. Danach mit dem Finger verschieben, an den Griffen skalieren oder drehen'],
   '4.5': ['Bemaßung wie im CAD: von Punkt zu Punkt messen, dann mit einem zweiten Zug die Maßlinie parallel herausziehen (Maßhilfslinien wachsen mit); Punkte rasten an Ecken und Linienenden ein', 'Bilder, Texte und Stempel lassen sich viel flüssiger verschieben'],
   '4.4': ['Neue Textfelder starten klein und wachsen beim Schreiben mit – danach passt die Breite genau zum Text', 'Verschieben von Texten und Textbausteinen deutlich flüssiger'],
   '4.3': ['Bemaßung neben dem Lineal: Maßlinie mit Maßzahl, Maßstab (1:1 bis 1:500 oder eigener), Einheit und Nachkommastellen einstellbar; Maßzahl lässt sich überschreiben', 'Statik: Durchlaufträger und andere Balkensysteme ohne Gelenkkreis im Balken über den Lagern'],
