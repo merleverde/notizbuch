@@ -295,8 +295,39 @@ function arrowHead(it) {
   if (hf === 'stealth') return { filled: true, pts: [P(L, -0.4), [x2, y2], P(L, 0.4), P(L * 0.6, 0)], end: P(L * 0.62, 0) };
   return { filled: false, pts: [P(L, -0.45), [x2, y2], P(L, 0.45)], end: [x2, y2] };
 }
+/* Bemaßung: Maßlinie mit Begrenzungsstrichen und Schrägstrichen (Bauzeichnung), Maßzahl darüber */
+const dimFs = it => it.fs || 11;
+function dimLabel(it) {
+  if (it.text != null && it.text !== '') return it.text;
+  const mm = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) / 72 * 25.4 * (it.scale || 1);
+  const u = it.unit ?? 'm', v = u === 'm' ? mm / 1000 : u === 'cm' ? mm / 10 : mm, dec = it.dec ?? 2;
+  return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (u ? ' ' + u : '');
+}
+function drawDim(ctx, it) {
+  const { x1, y1, x2, y2 } = it, len = Math.hypot(x2 - x1, y2 - y1); if (len < 0.5) return;
+  const ux = (x2 - x1) / len, uy = (y2 - y1) / len, nx = -uy, ny = ux, fs = dimFs(it);
+  const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4);
+  ctx.save();
+  ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x1 - ux * e * 0.5, y1 - uy * e * 0.5); ctx.lineTo(x2 + ux * e * 0.5, y2 + uy * e * 0.5);   // Maßlinie (leicht überstehend)
+  for (const [px, py] of [[x1, y1], [x2, y2]]) {
+    ctx.moveTo(px - nx * e, py - ny * e); ctx.lineTo(px + nx * e, py + ny * e);                       // Maßhilfslinie
+    const dx = (ux + nx) * Math.SQRT1_2 * t, dy = (uy + ny) * Math.SQRT1_2 * t;                      // 45°-Schrägstrich
+    ctx.moveTo(px - dx, py - dy); ctx.lineTo(px + dx, py + dy);
+  }
+  ctx.stroke();
+  // Maßzahl mittig über der Linie, immer lesbar (nie kopfüber)
+  let a = Math.atan2(y2 - y1, x2 - x1); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, off = fs * 0.35 + it.size;
+  ctx.translate(mx, my); ctx.rotate(a);
+  ctx.fillStyle = it.color; ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText(dimLabel(it), 0, -off);
+  ctx.restore();
+}
 const closedShape = it => it.kind === 'rect' || it.kind === 'ellipse' || it.kind === 'poly';
 function drawShape(ctx, it) {
+  if (it.kind === 'dim') return drawDim(ctx, it);
   ctx.save();
   ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const { x1, y1, x2, y2 } = it;
@@ -326,6 +357,7 @@ function drawShape(ctx, it) {
 /* Bereichsradierer: Form in Linienzüge (Striche) umwandeln, die sich stückweise radieren lassen.
    Eine Füllung bleibt als eigene Form ohne Rand erhalten. */
 function shapeToStrokes(it) {
+  if (it.kind === 'dim') return [];          // Bemaßung wird beim Radieren als Ganzes gelöscht
   const base = { t: 'stroke', tool: 'pen', style: 'shape', color: it.color, size: it.size };
   if (it.dash) base.dash = true;
   const lines = [], out0 = [];
@@ -467,7 +499,7 @@ function bbox(it) {
     return { x: x - m, y: y - m, w: Math.max(...xs) - x + 2 * m, h: Math.max(...ys) - y + 2 * m };
   }
   if (it.t === 'shape') {
-    const m = it.kind === 'arrow' ? Math.max(it.size / 2, headLen(it)) : it.size / 2;
+    const m = it.kind === 'arrow' ? Math.max(it.size / 2, headLen(it)) : it.kind === 'dim' ? dimFs(it) * 1.6 : it.size / 2;
     return { x: Math.min(it.x1, it.x2) - m, y: Math.min(it.y1, it.y2) - m, w: Math.abs(it.x2 - it.x1) + 2 * m, h: Math.abs(it.y2 - it.y1) + 2 * m };
   }
   if (it.t === 'text') return { x: it.x, y: it.y, w: it.w, h: it.h || it.size * 1.35 };
@@ -1030,7 +1062,7 @@ class PdfCtx {
     this.cur = {};
   }
 }
-const needsRaster = it => it.t === 'text' || it.t === 'table' || (it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain);
+const needsRaster = it => it.t === 'text' || it.t === 'table' || (it.t === 'shape' && it.kind === 'dim') || (it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain);
 function dataUrlBytes(url) { return b64decode(url.slice(url.indexOf(',') + 1)); }
 
 /* Ausschnitt mit den übergebenen Elementen als PNG rendern (für Bleistift und Text) */
@@ -1526,8 +1558,9 @@ function startAct(tool, p, e, extra = {}) {
     }
     addPts(e);
     // Lineal: der Strich wird von Anfang an als Gerade gezogen
-    if (prefs.ruler) {
+    if (prefs.ruler || (tool === 'pen' && prefs.dim)) {
       act.recog = { kind: 'markerLine', x1: x, y1: y, x2: x, y2: y };
+      if (tool === 'pen' && prefs.dim) act.dimMode = true;
       const a = act;
       a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 600);
     } else holdCheck(x, y);
@@ -1581,9 +1614,16 @@ function onHold(a) {
 function drawRecog(a) {
   const ctx = a.ctx, r = a.recog;
   ctx.clearRect(0, 0, a.p.w, a.p.h);
-  if (r.kind === 'markerLine') drawStroke(ctx, { ...a.item, pts: [[r.x1, r.y1, .5], [r.x2, r.y2, .5]] });
+  if (r.kind === 'markerLine' && a.dimMode) drawDim(ctx, dimFromRecog(a));
+  else if (r.kind === 'markerLine') drawStroke(ctx, { ...a.item, pts: [[r.x1, r.y1, .5], [r.x2, r.y2, .5]] });
   else drawShape(ctx, r);
   if (r.kind === 'markerLine' || r.kind === 'line') drawLineInfo(ctx, r.x1, r.y1, r.x2, r.y2, a.k);
+}
+function dimFromRecog(a) {
+  const r = a.recog, pen = prefs.sizes.pen || 1.5;
+  return { t: 'shape', id: a.dimId ||= uid(), kind: 'dim', x1: +r.x1.toFixed(2), y1: +r.y1.toFixed(2), x2: +r.x2.toFixed(2), y2: +r.y2.toFixed(2),
+    color: prefs.color, size: +Math.max(0.6, Math.min(pen, 2) * 0.6).toFixed(2), fs: +Math.max(8, prefs.textSize * 0.75).toFixed(1),
+    scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2 };
 }
 /* Beim Ziehen einer Geraden: Winkel zur Waagerechten und Länge neben dem Linienende anzeigen */
 function drawLineInfo(ctx, x1, y1, x2, y2, k) {
@@ -2167,7 +2207,7 @@ function endAct(e) {
   } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
     const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
-    const it = tiny ? null : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
+    const it = tiny ? null : a.dimMode ? dimFromRecog(a) : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
     if (it) addStrokes(pe, p, [it]);
     clearLive(pe); commit(p, a.before);
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
@@ -2292,12 +2332,12 @@ function renderSel() {
   el.style.setProperty('--hs', hs.toFixed(1) + 'px');
   const oneFormula = items.length === 1 && isFormula(items[0]);
   // Einzelne Linie/Pfeil: Griffe an beiden Enden; sonst Ecken (proportional) und Seiten (nur Breite/Höhe)
-  const line = items.length === 1 && items[0].t === 'shape' && (items[0].kind === 'line' || items[0].kind === 'arrow') ? items[0] : null;
+  const line = items.length === 1 && items[0].t === 'shape' && ['line', 'arrow', 'dim'].includes(items[0].kind) ? items[0] : null;
   const grips = line
     ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -2320,6 +2360,13 @@ function renderSel() {
     if (a === 'formula') { if (items[0].matrix) openGrid('matrix', p, items[0]); else openFormula(p, items[0]); }
     else if (a === 'edittext') editTextItem(p, items[0]);
     else if (a === 'edittable') openGrid('table', p, items[0]);
+    else if (a === 'dimtext') {
+      const it = items[0], v = prompt('Maßzahl (leer lassen = automatisch gemessen):', it.text ?? dimLabel(it));
+      if (v === null) return;
+      const before = snap(p), nv = v.trim(), auto = !nv || nv === dimLabel({ ...it, text: null });
+      p.items = p.items.map(x => x.id === it.id ? (auto ? (({ text, ...r }) => r)(x) : { ...x, text: nv }) : x);
+      refreshPage(p); commit(p, before); renderSel();
+    }
     else if (a === 'stamp') saveSelAsStamp();
     else if (a === 'style') openStylePop(btn);
     else if (a === 'layer') showPop($('#layerPop'), btn);
@@ -2775,6 +2822,34 @@ function finishFormula() {
   refreshPage(p); commit(p, before);
   setSel({ p, ids: new Set([it.id]) });
 }
+/* ---------------- Bemaßung: Maßstab, Einheit, Nachkommastellen ---------------- */
+const SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500];
+function fmtScale(v) { return (+v).toLocaleString('de-DE', { maximumFractionDigits: 3 }); }
+$('#scaleList').innerHTML = SCALES.map(v => `<button data-scale="${v}">1:${v}</button>`).join('');
+function syncScalePop() {
+  const sc = prefs.dimScale || 50;
+  document.querySelectorAll('#scaleList [data-scale]').forEach(b => b.classList.toggle('active', +b.dataset.scale === sc));
+  $('#scaleOwn').value = SCALES.includes(sc) ? '' : sc;
+  document.querySelectorAll('#unitList [data-unit]').forEach(b => b.classList.toggle('active', b.dataset.unit === (prefs.dimUnit ?? 'm')));
+  document.querySelectorAll('#decList [data-dec]').forEach(b => b.classList.toggle('active', +b.dataset.dec === (prefs.dimDec ?? 2)));
+}
+// Änderung gilt für neue Maße und für markierte Maße
+function setDimPref(key, val) {
+  prefs[key] = val; savePrefs(); syncScalePop(); updToolbar();
+  if (!S.sel) return;
+  const { p, ids } = S.sel, prop = { dimScale: 'scale', dimUnit: 'unit', dimDec: 'dec' }[key];
+  if (!p.items.some(i => ids.has(i.id) && i.kind === 'dim')) return;
+  const before = snap(p);
+  p.items = p.items.map(i => ids.has(i.id) && i.kind === 'dim' ? { ...i, [prop]: val } : i);
+  refreshPage(p); commit(p, before); renderSel();
+}
+$('#scalePop').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.scale) setDimPref('dimScale', +b.dataset.scale);
+  else if (b.dataset.unit != null) setDimPref('dimUnit', b.dataset.unit);
+  else if (b.dataset.dec != null) setDimPref('dimDec', +b.dataset.dec);
+});
+$('#scaleOwn').addEventListener('change', e => { const v = parseFloat(String(e.target.value).replace(',', '.')); if (v > 0) setDimPref('dimScale', v); });
 /* ---------------- Tabellen und Matrizen: gemeinsames Eingabefenster ---------------- */
 let gridCtx = null;
 function gridValues() { return [...$('#gridCells').querySelectorAll('input')].reduce((a, inp) => { (a[+inp.dataset.r] ||= [])[+inp.dataset.c] = inp.value; return a; }, []); }
@@ -2910,6 +2985,9 @@ const STATIK_LOADS = [
 ];
 function statikItems(id, s, color) {
   const thin = Math.max(1, s * 0.04), thick = Math.max(1.6, s * 0.08), out = [], late = [];
+  // Bei Balkensystemen sitzt das Lager direkt am Balken – ein Kreis dort sähe aus wie ein Momentengelenk im Balken
+  // (beim Durchlaufträger wäre das System dann kinematisch). Kreise nur bei einzelnen Auflagern und an Rahmenfüßen.
+  const pins = !['einfeld', 'krag', 'ueberstand', 'zweifeld', 'einsplos', 'beids', 'gerber'].includes(id);
   const L = (pts, w = thin) => out.push(stampLine(pts.map(([x, y]) => [x * s, y * s]), color, w));
   const hinge = (x, y, r) => late.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: (x - r) * s, y1: (y - r) * s, x2: (x + r) * s, y2: (y + r) * s, color, size: thin, fill: '#ffffff', fillMode: 2 });
   const hatch = (x1, x2, y, k) => { for (let x = x1 + 0.12 * k; x <= x2 + 1e-6; x += 0.2 * k) L([[x, y], [x - 0.15 * k, y + 0.17 * k]]); };
@@ -2919,7 +2997,7 @@ function statikItems(id, s, color) {
     let g = y + 0.5 * k;
     if (roller) { g = y + 0.63 * k; L([[x - 0.45 * k, g], [x + 0.45 * k, g]]); }
     hatch(x - 0.45 * k, x + 0.45 * k, g, k);
-    hinge(x, y, 0.07 * k);
+    if (pins) hinge(x, y, 0.07 * k);
   };
   // Einspannung: Wand senkrecht, Schraffur auf der Wandseite (dir -1 = links, +1 = rechts)
   const wall = (x, y, k, dir) => {
@@ -3351,6 +3429,8 @@ function updToolbar() {
   if (S.note) renderCompass();
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
+  $('#btnDim').hidden = t !== 'pen'; $('#btnDim').classList.toggle('active', !!prefs.dim);
+  $('#btnScale').hidden = t !== 'pen' || !prefs.dim; $('#btnScale').textContent = '1:' + fmtScale(prefs.dimScale || 50) + ' ▾';
   $('#btnSnap').hidden = t !== 'marker';
   $('#btnSnap').classList.toggle('active', prefs.snapText !== false);
   $('#markerBox').hidden = t !== 'marker';
@@ -3451,7 +3531,9 @@ $('#toolbar').addEventListener('click', e => {
   }
   else if (b.dataset.color) setColor(b.dataset.color);
   else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
-  else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; if (prefs.ruler) prefs.dim = false; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnDim') { prefs.dim = !prefs.dim; if (prefs.dim) prefs.ruler = false; savePrefs(); updToolbar(); if (prefs.dim && !prefs.dimHint) { prefs.dimHint = true; savePrefs(); toast('Bemaßung: Linie ziehen – die Maßzahl wird im eingestellten Maßstab berechnet. Maßstab über den Knopf daneben.', 6000); } }
+  else if (b.id === 'btnScale') { syncScalePop(); showPop($('#scalePop'), b); }
   else if (b.id === 'btnAlpha') showPop($('#alphaPop'), b);
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
@@ -4236,7 +4318,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 58;
+const APP_VERSION = 59;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4345,6 +4427,7 @@ const TUTORIAL = [
     <li>Jedes Werkzeug merkt sich <b>seine eigene Farbe</b>.</li>
     <li><b>Form erkennen</b>: Am Ende eines Strichs den Stift kurz halten – aus der Kritzelei wird eine saubere Linie, ein Kreis oder ein Rechteck.</li>
     <li><b>Lineal</b>: Jeder Strich wird eine gerade Linie; Winkel und Länge werden angezeigt.</li>
+    <li><b>Bemaßung</b> (neben dem Lineal): Jeder Strich wird eine Maßlinie mit Maßzahl. Daneben stellst du <b>Maßstab</b> (z. B. 1:50), Einheit und Nachkommastellen ein. Die Zahl lässt sich überschreiben: Maß markieren → „Maßzahl ändern“; die Enden kannst du mit dem Lasso verschieben, die Zahl rechnet sich neu.</li>
     <li><b>S Pen-Taste</b> gedrückt halten = Radierer. <b>Kritzeln</b> über Geschriebenes löscht es (abschaltbar im Menü ⋮).</li>
     <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist.</li></ul>` },
   { t: 'Textmarker und Zauberstift', i: '[data-tool="marker"]', h: `<h3>Textmarker</h3><ul>
@@ -4417,6 +4500,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.3': ['Bemaßung neben dem Lineal: Maßlinie mit Maßzahl, Maßstab (1:1 bis 1:500 oder eigener), Einheit und Nachkommastellen einstellbar; Maßzahl lässt sich überschreiben', 'Statik: Durchlaufträger und andere Balkensysteme ohne Gelenkkreis im Balken über den Lagern'],
   '4.2': ['Tabellen wie in LibreOffice: Zeilen, Spalten und Kopfzeile wählen, Zellen ausfüllen, später über „Tabelle bearbeiten“ ändern (▦ Tabelle beim Text-Werkzeug oder im Menü ⋮)', 'Mathe: Matrizen beliebiger Größe (bis 8×8) mit runden, eckigen, Betrags- oder geschweiften Klammern'],
   '4.1': ['Smarte Hilfslinien: Beim Verschieben und Skalieren rasten Objekte an Kanten und Mitten anderer Objekte und an der Seitenmitte ein (im Menü ⋮ abschaltbar)', 'Ausrichten: markierte Objekte links, mittig, rechts, oben, unten ausrichten oder gleichmäßig verteilen'],
   '4.0': ['Add-on Flussdiagramm: 27 Symbole wie in yEd (Prozess, Entscheidung, Start/Ende, Daten, Dokument, Datenbank …)'],

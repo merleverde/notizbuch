@@ -114,6 +114,8 @@
     </div>
     <div id="rulerBox" class="seg" hidden>
       <button id="btnRuler" title="Lineal: jeder Strich wird eine gerade Linie">Lineal</button>
+      <button id="btnDim" title="Bemaßung: jeder Strich wird eine Maßlinie mit Maßzahl">Bemaßung</button>
+      <button id="btnScale" title="Maßstab und Einheit der Bemaßung">1:50 ▾</button>
       <button id="btnSnap" title="Textmarker rastet auf PDF-Seiten an den Textzeilen ein">Text einrasten</button>
     </div>
     <div id="markerBox" class="seg marker-box" hidden>
@@ -249,6 +251,20 @@
     <button data-al="vdist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 3h16M4 21h16"/><rect x="8" y="9" width="8" height="6" rx="1"/></svg><span>Senkrecht verteilen</span></button>
   </div>
   <p id="alignHint" class="stamp-hint"></p>
+</div>
+<div id="scalePop" class="popover scale-pop" hidden aria-label="Maßstab">
+  <div class="style-title">Maßstab</div>
+  <div id="scaleList" class="scale-grid"></div>
+  <label class="scale-own">Eigener: 1 : <input type="number" id="scaleOwn" min="0.001" step="any"></label>
+  <div class="style-title">Einheit</div>
+  <div class="scale-row" id="unitList">
+    <button data-unit="mm">mm</button><button data-unit="cm">cm</button><button data-unit="m">m</button><button data-unit="">ohne</button>
+  </div>
+  <div class="style-title">Nachkommastellen</div>
+  <div class="scale-row" id="decList">
+    <button data-dec="0">0</button><button data-dec="1">1</button><button data-dec="2">2</button><button data-dec="3">3</button>
+  </div>
+  <p class="stamp-hint">Gilt für neue Maße – und für markierte Maße. Die Maßzahl lässt sich nach dem Messen überschreiben: Maß markieren → „Maßzahl ändern“.</p>
 </div>
 <div id="stampPop" class="popover stamp-pop" hidden aria-label="Stempel">
   <div class="style-title">Stempel</div>

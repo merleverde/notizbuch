@@ -567,3 +567,12 @@ dialog.grid-dlg { width: min(860px, calc(100vw - 32px)); }
 .grid-cells input { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); font: inherit; font-size: .9rem; }
 .grid-cells input.head { font-weight: 700; background: var(--accent-soft); }
 .matrix-btn { margin-top: 4px; }
+
+/* Bemaßung: Maßstab */
+.scale-pop { width: 300px; padding: 12px 14px; gap: 8px; }
+.scale-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.scale-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.popover .scale-grid button, .popover .scale-row button { justify-content: center; text-align: center; padding: 7px 4px; border: 1px solid var(--line); font-size: .85rem; }
+.popover .scale-grid button.active, .popover .scale-row button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.scale-own { display: flex; align-items: center; gap: 6px; font-size: .9rem; }
+.scale-own input { width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); font: inherit; }
