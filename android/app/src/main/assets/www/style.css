@@ -487,6 +487,13 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 .popover .head-row button { flex: 1; justify-content: center; text-align: center; padding: 6px 10px; border: 1px solid var(--line); }
 .popover .head-row button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .head-row svg { width: 26px; height: 26px; display: block; margin: auto; }
+.hatch-grid { display: grid; grid-template-columns: repeat(3, minmax(74px, auto)); gap: 6px; }
+.popover .hatch-grid button { flex-direction: column; justify-content: center; gap: 2px; padding: 6px 8px; border: 1px solid var(--line); font-size: .78rem; text-align: center; }
+.popover .hatch-grid button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.hatch-grid svg { width: 32px; height: 32px; display: block; }
+.hatch-grid.hatch-compact { grid-template-columns: repeat(4, minmax(56px, auto)); gap: 4px; }
+.hatch-compact svg { width: 26px; height: 26px; }
+.popover .hatch-compact button { padding: 4px 5px; font-size: .7rem; }
 
 /* Ordnerpfad (Brotkrumen) über den Unterordnern */
 .crumbs {

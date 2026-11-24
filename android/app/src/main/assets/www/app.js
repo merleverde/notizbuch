@@ -379,7 +379,140 @@ function drawShape(ctx, it) {
   // helle Füllung immer aus der Linienfarbe berechnen: so werden auch ältere (deckende) helle Füllungen durchscheinend
   if (it.fill && closedShape(it)) { ctx.fillStyle = it.fillMode === 1 ? fillFor(it.color, 1) : it.fill; ctx.fill(); }
   if (!it.noStroke) ctx.stroke();
+  if (it.hatch && closedShape(it)) drawHatch(ctx, it);
   ctx.restore();
+}
+
+/* ---------------- Schraffuren (Baustoffe) ----------------
+   Die Linien werden selbst berechnet und an der Form abgeschnitten (kein clip, kein Muster):
+   so sieht die Schraffur in der App und in der gespeicherten PDF gleich aus und bleibt dort scharf.
+   Abstände in pt (1 mm ≈ 2,83 pt). */
+const HATCHES = {
+  rc:       { label: 'Stahlbeton', title: 'Stahlbeton: Schraffur unter 45°, abwechselnd durchgezogen und gestrichelt' },
+  steel:    { label: 'Stahl',      title: 'Stahl: enge Schraffur unter 45°' },
+  wood:     { label: 'Holz',       title: 'Holz in Faserrichtung (entlang der langen Seite)' },
+  endgrain: { label: 'Hirnholz',   title: 'Hirnholz: Auskreuzung von Ecke zu Ecke' },
+  soil:     { label: 'Erdreich',   title: 'Erdreich (gewachsener Boden): Dreiergruppen unter 45°' },
+  insul:    { label: 'Dämmung',    title: 'Dämmstoff (weich): Schlaufen über die ganze Dicke, entlang der langen Seite' }
+};
+// Teilstücke der Strecke a–b, die innerhalb des (geschlossenen) Vielecks liegen
+function clipSeg(a, b, poly) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], ts = [0, 1], out = [];
+  for (let i = 1; i < poly.length; i++) {
+    const [px, py] = poly[i - 1], ex = poly[i][0] - px, ey = poly[i][1] - py, den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const t = ((px - a[0]) * ey - (py - a[1]) * ex) / den, u = ((px - a[0]) * dy - (py - a[1]) * dx) / den;
+    if (t > 0 && t < 1 && u >= 0 && u <= 1) ts.push(t);
+  }
+  ts.sort((p, q) => p - q);
+  for (let i = 1; i < ts.length; i++) {
+    const t0 = ts[i - 1], t1 = ts[i], tm = (t0 + t1) / 2;
+    if (t1 - t0 > 1e-6 && inPoly(a[0] + dx * tm, a[1] + dy * tm, poly)) out.push([[a[0] + dx * t0, a[1] + dy * t0], [a[0] + dx * t1, a[1] + dy * t1]]);
+  }
+  return out;
+}
+// Linienzug abschneiden; aneinanderstoßende Stücke bleiben ein Zug (saubere Wellenlinien)
+function clipLine(pts, poly) {
+  const out = []; let cur = null;
+  // schnell: liegen beide Enden eines kurzen Stücks innen, wird es ohne Schnittberechnung übernommen
+  const ins = pts.length > 2 ? pts.map(([x, y]) => inPoly(x, y, poly)) : null;
+  for (let i = 1; i < pts.length; i++) for (const [p, q] of (ins && ins[i - 1] && ins[i] ? [[pts[i - 1], pts[i]]] : clipSeg(pts[i - 1], pts[i], poly))) {
+    const e = cur && cur[cur.length - 1];
+    if (e && Math.abs(e[0] - p[0]) < 1e-6 && Math.abs(e[1] - p[1]) < 1e-6) cur.push(q);
+    else { cur = [p, q]; out.push(cur); }
+  }
+  return out;
+}
+// Schar paralleler Linien unter dem Winkel ang im Abstand s (am Seitenraster ausgerichtet: Nachbarformen passen zusammen)
+function hatchFamily(poly, ang, s, wave = 0, sc = 1, group = [0]) {
+  const c = Math.cos(ang), sn = Math.sin(ang), out = [];
+  const pn = poly.map(([x, y]) => -x * sn + y * c), pd = poly.map(([x, y]) => x * c + y * sn);
+  const n0 = Math.min(...pn), n1 = Math.max(...pn), d0 = Math.min(...pd) - 1, d1 = Math.max(...pd) + 1;
+  if ((n1 - n0) / s > 400) s = (n1 - n0) / 400;           // Schutz bei riesigen Formen
+  const P = (t, o) => [t * c - o * sn, t * sn + o * c];
+  for (let k = Math.floor(n0 / s); k * s < n1; k++) for (const g of group) {
+    const off = k * s + g, line = [];
+    if (off <= n0 || off >= n1) continue;
+    if (!wave) line.push(P(d0, off), P(d1, off));
+    else for (let t = d0, st = Math.max(3 * sc, (d1 - d0) / 150); ; t = Math.min(t + st, d1)) { line.push(P(t, off + wave * Math.sin(t / (16 * sc) + k * 0.5))); if (t >= d1) break; }
+    out.push(...clipLine(line, poly));
+  }
+  return out;
+}
+// Dämmstoff: Schlaufenlinie (Trochoide) entlang der langen Seite, Schlaufen reichen über die ganze Dicke
+function insulLines(it, poly, sc) {
+  const ang = grainAngle(it, poly), c = Math.cos(ang), sn = Math.sin(ang);
+  const pn = poly.map(([x, y]) => -x * sn + y * c), pd = poly.map(([x, y]) => x * c + y * sn);
+  const n0 = Math.min(...pn), n1 = Math.max(...pn), d0 = Math.min(...pd), d1 = Math.max(...pd);
+  const T = n1 - n0; if (T < 4 * sc) return [];               // zu dünn für Schlaufen
+  const m = (n0 + n1) / 2, A = T * 0.42, a = Math.max(3 * sc, T * 0.5) / (2 * Math.PI), b = a * 2.6;
+  const P = (t, o) => [t * c - o * sn, t * sn + o * c], line = [];
+  const step = Math.max(0.2, (d1 - d0 + 4 * b) / a / 3000);
+  for (let f = 0; ; f += step) { const t = d0 - 2 * b + a * f - b * Math.sin(f); line.push(P(t, m - A * Math.cos(f))); if (t > d1 + b) break; }
+  return clipLine(line, poly);
+}
+// gerade Linien in Striche zerlegen (Raster entlang der Richtung ang: Striche benachbarter Linien liegen gleich)
+function dashLines(lines, ang, on, off) {
+  const c = Math.cos(ang), sn = Math.sin(ang), per = on + off, out = [];
+  for (const [a, b] of lines) {
+    let t0 = a[0] * c + a[1] * sn, t1 = b[0] * c + b[1] * sn;
+    const flip = t1 < t0; if (flip) [t0, t1] = [t1, t0];
+    const [p, q] = flip ? [b, a] : [a, b], L = t1 - t0 || 1;
+    const at = t => [p[0] + (q[0] - p[0]) * (t - t0) / L, p[1] + (q[1] - p[1]) * (t - t0) / L];
+    for (let k = Math.floor(t0 / per); k * per < t1; k++) {
+      const s0 = Math.max(t0, k * per), s1 = Math.min(t1, k * per + on);
+      if (s1 - s0 > 0.3) out.push([at(s0), at(s1)]);
+    }
+  }
+  return out;
+}
+// Faserrichtung: entlang der längsten Seite (gedrehte Rechtecke sind Vielecke)
+function grainAngle(it, poly) {
+  if (it.kind !== 'poly') return Math.abs(it.x2 - it.x1) >= Math.abs(it.y2 - it.y1) ? 0 : Math.PI / 2;
+  let best = -1, ang = 0;
+  for (let i = 1; i < poly.length; i++) {
+    const dx = poly[i][0] - poly[i - 1][0], dy = poly[i][1] - poly[i - 1][1], l = Math.hypot(dx, dy);
+    if (l > best) { best = l; ang = Math.atan2(dy, dx); }
+  }
+  return ang;
+}
+const hatchCache = new Map();
+function hatchLines(it, sc = 1) {
+  const key = sc === 1 && [it.hatch, it.kind, it.x1, it.y1, it.x2, it.y2, it.pts ? it.pts.join(';') : ''].join('|');
+  if (key && hatchCache.has(key)) return hatchCache.get(key);
+  const poly = shapeOutline(it), Q = Math.PI / 4;
+  let lines = [];
+  if (it.hatch === 'rc') lines = [...hatchFamily(poly, -Q, 8 * sc), ...dashLines(hatchFamily(poly, -Q, 8 * sc, 0, sc, [4 * sc]), -Q, 3.5 * sc, 2 * sc)];
+  else if (it.hatch === 'steel') lines = hatchFamily(poly, -Q, 2.5 * sc);
+  else if (it.hatch === 'wood') lines = hatchFamily(poly, grainAngle(it, poly), 4.5 * sc, 1 * sc, sc);
+  else if (it.hatch === 'soil') lines = hatchFamily(poly, -Q, 12 * sc, 0, sc, [0, 2.2 * sc, 4.4 * sc]);
+  else if (it.hatch === 'insul') lines = insulLines(it, poly, sc);
+  else if (it.hatch === 'endgrain') {
+    let a, b, c, d;
+    if (it.kind === 'poly' && it.pts.length === 4) [a, b, c, d] = it.pts;
+    else {
+      const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      [a, b, c, d] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    }
+    lines = [...clipSeg(a, c, poly), ...clipSeg(b, d, poly)];
+  }
+  if (key) { if (hatchCache.size > 500) hatchCache.clear(); hatchCache.set(key, lines); }
+  return lines;
+}
+const hatchW = it => clamp(it.size * 0.45, 0.35, 1.2);
+function drawHatch(ctx, it) {
+  const lines = hatchLines(it); if (!lines.length) return;
+  ctx.save(); ctx.setLineDash([]);
+  ctx.strokeStyle = it.color; ctx.lineWidth = hatchW(it); ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (const l of lines) l.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  ctx.stroke(); ctx.restore();
+}
+// kleines Vorschaubild für Knopf und Auswahl
+function hatchIcon(h) {
+  const it = { kind: 'rect', x1: 3.5, y1: 6, x2: 20.5, y2: 18, hatch: h };
+  const d = h ? hatchLines(it, 0.55).map(l => 'M' + l.map(([x, y]) => x.toFixed(2) + ' ' + y.toFixed(2)).join('L')).join('') : '';
+  return `<svg viewBox="0 0 24 24"><path d="${d}" fill="none" stroke="currentColor" stroke-width="${h === 'steel' ? 0.7 : 1}"/><rect x="3.5" y="6" width="17" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
 }
 
 /* Bereichsradierer: Form in Linienzüge (Striche) umwandeln, die sich stückweise radieren lassen.
@@ -406,7 +539,7 @@ function shapeToStrokes(it) {
     }
   }
   const out = [...out0];
-  if (it.fill && closedShape(it)) out.push({ ...it, id: uid(), noStroke: true });
+  if ((it.fill || it.hatch) && closedShape(it)) out.push({ ...it, id: uid(), noStroke: true });
   lines.forEach((l, i) => out.push({ ...base, id: i ? uid() : it.id, pts: l.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2), 0.5]) }));
   return out;
 }
@@ -572,7 +705,7 @@ function hitItem(it, x, y, r) {
   }
   if (it.t === 'shape') {
     const o = shapeOutline(it);
-    if (it.fill && closedShape(it) && inPoly(x, y, o)) return true;      // gefüllte Formen auch innen treffen
+    if ((it.fill || it.hatch) && closedShape(it) && inPoly(x, y, o)) return true;      // gefüllte/schraffierte Formen auch innen treffen
     for (let i = 1; i < o.length; i++) if (segDist(x, y, o[i - 1][0], o[i - 1][1], o[i][0], o[i][1]) < r + it.size / 2) return true;
     return false;
   }
@@ -2354,6 +2487,7 @@ function shapeFromAct(a = act) {
   const base = { t: 'shape', id: uid(), color: prefs.color, size: prefs.sizes.shape };
   if (prefs.dash) base.dash = true;
   if (prefs.fill && prefs.shape !== 'line' && prefs.shape !== 'arrow') { base.fillMode = prefs.fill; base.fill = fillFor(prefs.color, prefs.fill); }
+  if (HATCHES[prefs.hatch] && prefs.shape !== 'line' && prefs.shape !== 'arrow') base.hatch = prefs.hatch;
   if (prefs.shape === 'line' || prefs.shape === 'arrow') {
     const [x2, y2] = snapLine(a.x0, a.y0, a.x, a.y);
     if (prefs.shape === 'arrow') { base.hf = prefs.headForm || 'open'; base.hs = prefs.headSize ?? 1; }
@@ -2810,6 +2944,10 @@ function openStylePop(anchor) {
     box.appendChild(b);
   }
   $('#styleSizeRow').hidden = !sized.length;
+  const closed = items.filter(i => i.t === 'shape' && closedShape(i));
+  $('#styleHatchRow').hidden = !closed.length;
+  const curH = closed.length && closed.every(i => (i.hatch || '') === (closed[0].hatch || '')) ? (closed[0].hatch || '') : null;
+  document.querySelectorAll('#styleHatch [data-hatch]').forEach(b => b.classList.toggle('active', b.dataset.hatch === curH));
   if (sized.length) {
     const avg = sized.reduce((s, i) => s + i.size, 0) / sized.length;
     $('#styleSize').max = Math.max(20, Math.ceil(avg));
@@ -2843,6 +2981,12 @@ $('#styleSwatches').addEventListener('click', e => {
   document.querySelectorAll('#styleSwatches .swatch').forEach(b => b.classList.toggle('active', b.dataset.color === c));
 });
 $('#styleColor').addEventListener('change', e => setSelColor(e.target.value));
+$('#styleHatch').addEventListener('click', e => {
+  const b = e.target.closest('[data-hatch]'); if (!b) return;
+  const h = b.dataset.hatch;
+  applyStyle(it => { if (it.t === 'shape' && closedShape(it)) { if (h) it.hatch = h; else delete it.hatch; } }, true);
+  document.querySelectorAll('#styleHatch [data-hatch]').forEach(x => x.classList.toggle('active', x === b));
+});
 $('#styleSize').addEventListener('input', e => {
   const v = +e.target.value; $('#styleSizeVal').textContent = v.toLocaleString('de-DE');
   applyStyle(it => { if (hasSize(it)) it.size = v; }, false);
@@ -3651,6 +3795,10 @@ function updToolbar() {
   $('#eraserModes').hidden = t !== 'eraser';
   $('#shapeKinds').hidden = t !== 'shape';
   $('#btnFill').hidden = ['compass', 'line', 'arrow'].includes(prefs.shape);
+  $('#btnHatch').hidden = $('#btnFill').hidden;
+  $('#btnHatch').innerHTML = hatchIcon(HATCHES[prefs.hatch] ? prefs.hatch : 'rc');
+  $('#btnHatch').title = 'Schraffur: ' + (HATCHES[prefs.hatch]?.label || 'aus');
+  $('#btnHatch').classList.toggle('active', !!HATCHES[prefs.hatch]);
   $('#btnHead').hidden = prefs.shape !== 'arrow';
   $('#btnHead').innerHTML = `<svg viewBox="0 0 24 24">${HEAD_ICONS[prefs.headForm || 'open']}</svg>`;
   $('#stampBox').hidden = t !== 'stamp';
@@ -3750,6 +3898,16 @@ $('#headPop').addEventListener('click', e => {
     if (ch) { renderRegion(pageEls.get(p.id), p, { x: 0, y: 0, w: p.w, h: p.h }); commit(p, before); renderSel(); }
   }
 });
+/* Schraffur-Auswahl (Formen) */
+$('#hatchGrid').innerHTML = $('#styleHatch').innerHTML = [['', 'Keine', 'Keine Schraffur'], ...Object.entries(HATCHES).map(([k, v]) => [k, v.label, v.title])]
+  .map(([k, l, t]) => `<button data-hatch="${k}" title="${t}">${hatchIcon(k)}<span>${l}</span></button>`).join('');
+function syncHatchPop() {
+  document.querySelectorAll('#hatchPop [data-hatch]').forEach(b => b.classList.toggle('active', b.dataset.hatch === (HATCHES[prefs.hatch] ? prefs.hatch : '')));
+}
+$('#hatchPop').addEventListener('click', e => {
+  const b = e.target.closest('[data-hatch]'); if (!b) return;
+  prefs.hatch = b.dataset.hatch; savePrefs(); syncHatchPop(); updToolbar(); hidePops();
+});
 $('#optSmooth').addEventListener('change', e => { prefs.smoothing = +e.target.value; savePrefs(); });
 $('#optScribble').addEventListener('change', e => { prefs.scribble = e.target.checked; savePrefs(); });
 $('#optGuides').addEventListener('change', e => { prefs.guides = e.target.checked; savePrefs(); });
@@ -3775,6 +3933,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnHead') { syncHeadPop(); showPop($('#headPop'), b); }
+  else if (b.id === 'btnHatch') { syncHatchPop(); showPop($('#hatchPop'), b); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
   else if (b.dataset.shape) {
     prefs.shape = b.dataset.shape; savePrefs(); updToolbar();
@@ -4561,7 +4720,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 67;
+const APP_VERSION = 68;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4743,6 +4902,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.2': ['Neue Schraffuren für Formen (Bauwesen): Holz mit Faser, Hirnholz, Stahl, Stahlbeton (45°, abwechselnd durchgezogen und gestrichelt), Erdreich und Dämmstoff – Knopf neben „Füllung“; bereits gezeichnete Formen über das Stil-Menü schraffieren', 'Schraffuren bleiben im PDF scharfe Linien'],
   '5.1': ['„Einfügen“ erscheint auch mit dem Lasso nicht mehr beim einfachen Antippen – überall nur nach 2 Sekunden ruhigem Halten'],
   '5.0': ['„Einfügen“ erscheint erst nach 3 Sekunden Halten – mit dem Finger und mit dem Stift (nicht mehr aus Versehen)'],
   '4.9': ['Im PDF sind Textfelder, Stempeltexte und Tabellen jetzt echte Schrift statt Bild – am PC beim Heranzoomen gestochen scharf (Schreibschrift bleibt Bild)'],
