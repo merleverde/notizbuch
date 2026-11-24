@@ -303,11 +303,32 @@ function dimLabel(it) {
   const u = it.unit ?? 'm', v = u === 'm' ? mm / 1000 : u === 'cm' ? mm / 10 : mm, dec = it.dec ?? 2;
   return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (u ? ' ' + u : '');
 }
+function dimTextPos(it, ax, ay, bx, by) {
+  let a = Math.atan2(it.y2 - it.y1, it.x2 - it.x1); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
+  return { a, mx: (ax + bx) / 2, my: (ay + by) / 2, off: dimFs(it) * 0.35 + it.size };
+}
+/* PDF: Maß als Vektor – Linien wie gewohnt, die Maßzahl als echte Schrift (bleibt beim Heranzoomen am PC scharf) */
+async function pdfDim(out, pg, v, it) {
+  const label = dimLabel(it), fs = dimFs(it), c = parseColor(it.color) || [0, 0, 0, 1];
+  const font = out._nbHelv ||= await out.embedFont(PDFLib.StandardFonts.Helvetica);
+  let enc; try { enc = font.encodeText(label); } catch { return false; }          // Zeichen außerhalb der Standardschrift: als Bild
+  const keys = (out._nbHelvKeys ||= new Map());
+  if (!keys.has(pg)) keys.set(pg, pg.node.newFontDictionary('Fd', font.ref));
+  drawDim(v, it, true);
+  const d = dimPts(it), { a, mx, my, off } = dimTextPos(it, d.a[0], d.a[1], d.b[0], d.b[1]);
+  const w = font.widthOfTextAtSize(label, fs), co = Math.cos(a), si = Math.sin(a);
+  v.alpha(1, false);
+  v.ops.push(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(co, si, -si, co, mx, my), PDFLib.concatTransformationMatrix(1, 0, 0, -1, 0, 0),
+    PDFLib.setFillingRgbColor(c[0], c[1], c[2]), PDFLib.beginText(), PDFLib.setFontAndSize(keys.get(pg), fs),
+    PDFLib.moveText(-w / 2, off + fs * 0.22), PDFLib.showText(enc), PDFLib.endText(), PDFLib.popGraphicsState());
+  v.cur = {};
+  return true;
+}
 function dimPts(it) {
   const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) || 1, nx = -(it.y2 - it.y1) / len, ny = (it.x2 - it.x1) / len, o = it.off || 0;
   return { nx, ny, a: [it.x1 + nx * o, it.y1 + ny * o], b: [it.x2 + nx * o, it.y2 + ny * o] };
 }
-function drawDim(ctx, it) {
+function drawDim(ctx, it, noText) {
   const { x1, y1, x2, y2 } = it, len = Math.hypot(x2 - x1, y2 - y1); if (len < 0.5) return;
   const ux = (x2 - x1) / len, uy = (y2 - y1) / len, nx = -uy, ny = ux, fs = dimFs(it);
   const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4), o = it.off || 0, sg = Math.sign(o) || 1;
@@ -324,9 +345,9 @@ function drawDim(ctx, it) {
     ctx.moveTo(qx - dx, qy - dy); ctx.lineTo(qx + dx, qy + dy);
   }
   ctx.stroke();
+  if (noText) { ctx.restore(); return; }
   // Maßzahl mittig über der Linie, immer lesbar (nie kopfüber)
-  let a = Math.atan2(y2 - y1, x2 - x1); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
-  const mx = (ax + bx) / 2, my = (ay + by) / 2, off = fs * 0.35 + it.size;
+  const { a, mx, my, off } = dimTextPos(it, ax, ay, bx, by);
   ctx.translate(mx, my); ctx.rotate(a);
   ctx.fillStyle = it.color; ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
   ctx.fillText(dimLabel(it), 0, -off);
@@ -1128,6 +1149,7 @@ async function exportOverlay(out, pg, p, withPaper) {
     };
     const embedded = out._nbImgs ||= new Map();
     for (const it of p.items) {
+      if (it.t === 'shape' && it.kind === 'dim') { await flush(false); if (await pdfDim(out, pg, v, it)) continue; batch.push(it); continue; }
       if (needsRaster(it)) { batch.push(it); continue; }
       await flush(false);
       if (it.t === 'img') {
@@ -1472,11 +1494,11 @@ function onDown(e) {
       const g = gest = { type: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false, samples: [{ x: e.clientX, y: e.clientY, t: performance.now() }] };
       // Finger lange still halten → „Einfügen“ an dieser Stelle
       g.lpT = setTimeout(() => {
-        if (gest !== g || g.moved || touches.size !== 1 || !getClip()) return;
+        if (gest !== g || !g.lpT || touches.size !== 1 || !getClip()) return;
         const p = pageAt(g.sx, g.sy); if (!p) return;
         g.lp = true; navigator.vibrate?.(15);
         const [x, y] = toPage(p, g.sx, g.sy); showPasteChip(p, x, y);
-      }, 600);
+      }, 450);
     }
     else if (pts.length === 2) {
       stopFling();
@@ -1503,7 +1525,9 @@ function onMove(e) {
       gest.x = e.clientX; gest.y = e.clientY;
       gest.samples?.push({ x: e.clientX, y: e.clientY, t: performance.now() });
       if (gest.samples?.length > 30) gest.samples.shift();
-      if (Math.hypot(e.clientX - gest.sx, e.clientY - gest.sy) > 10) gest.moved = true;
+      const dd = Math.hypot(e.clientX - gest.sx, e.clientY - gest.sy);
+      if (dd > 10) gest.moved = true;
+      if (dd > 18) { clearTimeout(gest.lpT); gest.lpT = 0; }       // erst bei deutlicher Bewegung kein „Einfügen“ mehr
     } else if (gest?.type === 'pinch' && touches.size >= 2) {
       const [a, b] = [...touches.values()];
       setZoom(gest.z0 * dist(a, b) / gest.d0, (a.x + b.x) / 2, (a.y + b.y) / 2, gest.anchor);
@@ -1535,27 +1559,15 @@ function tapAt(cx, cy) {
   else if (prefs.tool === 'text' && p) { const [x, y] = toPage(p, cx, cy); textTap(p, x, y); }
   else fingerSelect(p, cx, cy);
 }
-/* Mit dem Finger auf ein Objekt tippen (in jedem Werkzeug, auch wenn der Finger nicht zeichnet):
-   es wird ausgewählt und lässt sich dann mit dem Finger verschieben, skalieren und drehen.
-   Zusammengehöriges wird mit ausgewählt: Buchstaben eines Wortes bzw. alle Teile eines Stempels. */
+/* Mit dem Finger auf ein Bild tippen (in jedem Werkzeug außer Lasso/Text, auch wenn der Finger nicht zeichnet):
+   es wird ausgewählt und lässt sich dann mit dem Finger verschieben, skalieren und drehen. */
 function fingerSelect(p, cx, cy) {
   if (!p) return S.sel && setSel(null);
   const [x, y] = toPage(p, cx, cy), r = 10 / scale();
-  const hit = [...p.items].reverse().find(it => it.tool !== 'cover' && hitItem(it, x, y, r));
+  // nur Bilder (auch Formeln): Text, Handschrift und Formen bleiben beim Antippen mit dem Finger unberührt
+  const hit = [...p.items].reverse().find(it => it.t === 'img' && hitItem(it, x, y, r));
   if (!hit) return S.sel && setSel(null);
-  const hand = it => it.t === 'stroke' && it.style !== 'shape' && it.tool !== 'marker';
-  const pool = p.items.filter(it => it.tool !== 'cover' && hand(it) === hand(hit));
-  const m = 4, touch = (a, b) => a.x - m <= b.x + b.w && b.x - m <= a.x + a.w && a.y - m <= b.y + b.h && b.y - m <= a.y + a.h;
-  const box = new Map(pool.map(it => [it.id, visBox(it)])), ids = new Set([hit.id]), todo = [hit];
-  while (todo.length && ids.size < 400) {
-    const a = box.get(todo.pop().id);
-    for (const it of pool) {
-      if (ids.has(it.id)) continue;
-      const b = box.get(it.id);
-      if (touch(a, b)) { ids.add(it.id); todo.push(it); }
-    }
-  }
-  setSel({ p, ids });
+  setSel({ p, ids: new Set([hit.id]) });
 }
 
 /* Live-Ebene. Hinweis: den „desynchronized“-Modus von Chrome nicht verwenden. Auf Samsung-Tablets
@@ -3738,9 +3750,15 @@ $('#fileImg').addEventListener('change', async e => {
 function showPop(pop, anchor) {
   hidePops();
   pop.hidden = false;
+  pop.style.maxHeight = '';
   const r = anchor.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
   pop.style.left = clamp(r.right - pw, 8, innerWidth - pw - 8) + 'px';
-  pop.style.top = (r.bottom + 6 + ph > innerHeight - 8 ? Math.max(8, r.top - ph - 6) : r.bottom + 6) + 'px';
+  // passt das Menü weder unter noch über den Knopf, wird es auf den freien Platz begrenzt und scrollt
+  const below = innerHeight - r.bottom - 14, above = r.top - 14;
+  if (ph <= below) pop.style.top = r.bottom + 6 + 'px';
+  else if (ph <= above) pop.style.top = r.top - ph - 6 + 'px';
+  else if (below >= above) { pop.style.maxHeight = below + 'px'; pop.style.top = r.bottom + 6 + 'px'; }
+  else { pop.style.maxHeight = above + 'px'; pop.style.top = r.top - above - 6 + 'px'; }
 }
 function hidePops() { document.querySelectorAll('.popover').forEach(p => p.hidden = true); }
 document.addEventListener('pointerdown', e => { if (!e.target.closest('.popover, #btnMenu, #btnBackup, #btnSettings, .card-menu, .thumb-menu')) hidePops(); });
@@ -4461,7 +4479,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 62;
+const APP_VERSION = 64;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4643,6 +4661,8 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.8': ['Im PDF ist die Maßzahl der Bemaßung jetzt echte Schrift statt Bild – bleibt am PC beim Zoomen scharf'],
+  '4.7': ['Menü ⋮ beim Bearbeiten lässt sich scrollen, wenn es nicht auf den Bildschirm passt', 'Antippen mit dem Finger wählt nur noch Bilder aus (Text und Handschrift nicht mehr)', '„Einfügen“ erscheint mit dem Finger schneller (knapp eine halbe Sekunde halten), auch wenn der Finger leicht zittert'],
   '4.6': ['Mit dem Finger auf ein Objekt, einen Text, ein Bild oder einen Stempel tippen wählt es aus – auch wenn „Mit dem Finger zeichnen“ aus ist. Danach mit dem Finger verschieben, an den Griffen skalieren oder drehen'],
   '4.5': ['Bemaßung wie im CAD: von Punkt zu Punkt messen, dann mit einem zweiten Zug die Maßlinie parallel herausziehen (Maßhilfslinien wachsen mit); Punkte rasten an Ecken und Linienenden ein', 'Bilder, Texte und Stempel lassen sich viel flüssiger verschieben'],
   '4.4': ['Neue Textfelder starten klein und wachsen beim Schreiben mit – danach passt die Breite genau zum Text', 'Verschieben von Texten und Textbausteinen deutlich flüssiger'],
