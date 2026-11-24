@@ -1112,6 +1112,85 @@ class PdfCtx {
 const needsRaster = it => it.t === 'text' || it.t === 'table' || (it.t === 'shape' && it.kind === 'dim') || (it.t === 'stroke' && it.tool === 'pen' && !!penStyle(it).grain);
 function dataUrlBytes(url) { return b64decode(url.slice(url.indexOf(',') + 1)); }
 
+/* ---- PDF: Text und Tabellen als echte Schrift (bleibt am PC beim Heranzoomen scharf) ----
+   Zeilenumbrüche werden wie in der App berechnet; gezeichnet wird mit den PDF-Standardschriften
+   (Standard → Helvetica, Serif → Times, Schreibmaschine → Courier). Schreibschrift und Zeichen,
+   die diese Schriften nicht kennen, werden wie bisher als Bild gespeichert. */
+const PDF_FONTS = { sans: ['Helvetica', 'HelveticaBold'], serif: ['TimesRoman', 'TimesRomanBold'], mono: ['Courier', 'CourierBold'] };
+async function pdfFont(out, pg, fam, bold) {
+  const names = PDF_FONTS[fam || 'sans']; if (!names) return null;
+  const name = names[bold ? 1 : 0], fonts = (out._nbStd ||= new Map());
+  if (!fonts.has(name)) fonts.set(name, await out.embedFont(PDFLib.StandardFonts[name]));
+  const font = fonts.get(name), keys = (out._nbStdKeys ||= new Map()), k = name + '|' + pg.ref?.toString();
+  if (!keys.has(k)) keys.set(k, pg.node.newFontDictionary('Ft', font.ref));
+  return { font, key: keys.get(k) };
+}
+// Zeilen wie drawText/drawTable umbrechen (gemessen mit der App-Schrift, damit die Umbrüche gleich bleiben)
+function wrapLines(text, size, bold, family, maxW) {
+  const mc = (wrapLines.mc ||= document.createElement('canvas').getContext('2d'));
+  mc.font = `${bold ? 700 : 400} ${size}px ${family}`;
+  const out = [];
+  for (const para of String(text).split(/\n/)) {
+    let line = '';
+    for (const w of para.split(/(\s+)/)) {
+      const test = line + w;
+      if (line.trim() && mc.measureText(test.trimEnd()).width > maxW) { out.push(line.trimEnd()); line = w.trimStart(); } else line = test;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function pdfTextOps(v, f, size, color, lines) {
+  const c = parseColor(color) || [0, 0, 0, 1];
+  v.alpha(c[3] ?? 1, false);
+  for (const { t, x, y } of lines) {
+    if (!t) continue;
+    v.ops.push(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(1, 0, 0, -1, x, y), PDFLib.setFillingRgbColor(c[0], c[1], c[2]),
+      PDFLib.beginText(), PDFLib.setFontAndSize(f.key, size), PDFLib.showText(f.font.encodeText(t)), PDFLib.endText(), PDFLib.popGraphicsState());
+  }
+  v.cur = {};
+}
+const canEncode = (f, t) => { try { f.font.encodeText(t); return true; } catch { return false; } };
+async function pdfTextItem(out, pg, v, it) {
+  const f = await pdfFont(out, pg, it.font, it.bold); if (!f) return false;
+  const lines = wrapLines(it.text, it.size, it.bold, fontOf(it), it.w);
+  if (!lines.every(t => canEncode(f, t))) return false;
+  const lh = it.size * 1.35; let y = it.y + (lh - it.size) / 2 + it.size * 0.86;
+  pdfTextOps(v, f, it.size, it.color, lines.map(t => { const o = { t, x: it.x, y }; y += lh; return o; }));
+  return true;
+}
+async function pdfTable(out, pg, v, it) {
+  const fN = await pdfFont(out, pg, 'sans', false), fB = await pdfFont(out, pg, 'sans', true);
+  const { x, y, w, h, rows, cols } = it, lw = it.lw || 1;
+  const cw = it.cw || Array(cols).fill(1 / cols), rh = it.rh || Array(rows).fill(1 / rows);
+  const xs = [x], ys = [y];
+  cw.forEach(f => xs.push(xs[xs.length - 1] + f * w)); rh.forEach(f => ys.push(ys[ys.length - 1] + f * h));
+  const pad = Math.max(2, it.size * 0.3), lh = it.size * 1.25, cells = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const txt = it.cells?.[r]?.[c]; if (!txt) continue;
+    const bold = !!(it.header && r === 0), f = bold ? fB : fN;
+    const lines = wrapLines(txt, it.size, bold, FONT, xs[c + 1] - xs[c] - 2 * pad);
+    if (!lines.every(t => canEncode(f, t))) return false;
+    const ch = ys[r + 1] - ys[r];
+    let ty = ys[r] + Math.max(pad, (ch - lines.length * lh) / 2) + it.size * 0.95;
+    cells.push({ f, clip: [xs[c], ys[r], xs[c + 1] - xs[c], ch], lines: lines.map(t => { const o = { t, x: xs[c] + pad, y: ty }; ty += lh; return o; }) });
+  }
+  // Rahmen und Kopfzeile als Vektor, dann die Schrift
+  v.save();
+  if (it.header && rows > 1) { v.fillStyle = fillFor(it.color, 1); v.fillRect(x, y, w, ys[1] - y); }
+  v.strokeStyle = it.color; v.lineWidth = lw; v.lineCap = 'butt';
+  v.beginPath();
+  ys.forEach(yy => { v.moveTo(x, yy); v.lineTo(x + w, yy); });
+  xs.forEach(xx => { v.moveTo(xx, y); v.lineTo(xx, y + h); });
+  v.stroke(); v.restore();
+  // wie in der App: Text, der nicht in die Zelle passt, wird an der Zelle abgeschnitten
+  for (const c of cells) {
+    v.ops.push(PDFLib.pushGraphicsState(), PDFLib.rectangle(...c.clip), PDFLib.clip(), PDFLib.endPath());
+    pdfTextOps(v, c.f, it.size, it.color, c.lines);
+    v.ops.push(PDFLib.popGraphicsState()); v.cur = {};
+  }
+  return true;
+}
 /* Ausschnitt mit den übergebenen Elementen als PNG rendern (für Bleistift und Text) */
 async function rasterPatch(out, p, items, asText) {
   const b = unionBox(items.map(bbox)), m = 3;
@@ -1150,6 +1229,8 @@ async function exportOverlay(out, pg, p, withPaper) {
     const embedded = out._nbImgs ||= new Map();
     for (const it of p.items) {
       if (it.t === 'shape' && it.kind === 'dim') { await flush(false); if (await pdfDim(out, pg, v, it)) continue; batch.push(it); continue; }
+      if (it.t === 'text' && it.text) { await flush(false); if (await pdfTextItem(out, pg, v, it)) continue; batch.push(it); continue; }
+      if (it.t === 'table') { await flush(false); if (await pdfTable(out, pg, v, it)) continue; batch.push(it); continue; }
       if (needsRaster(it)) { batch.push(it); continue; }
       await flush(false);
       if (it.t === 'img') {
@@ -1498,7 +1579,7 @@ function onDown(e) {
         const p = pageAt(g.sx, g.sy); if (!p) return;
         g.lp = true; navigator.vibrate?.(15);
         const [x, y] = toPage(p, g.sx, g.sy); showPasteChip(p, x, y);
-      }, 450);
+      }, 3000);                                               // bewusst lang: mit dem Finger erst nach 3 s halten
     }
     else if (pts.length === 2) {
       stopFling();
@@ -2160,10 +2241,9 @@ function moveAct(e) {
 function fillFor(color, mode) {
   if (mode === 2) return color;
   if (mode !== 1) return null;
-  const m = /^#([0-9a-f]{6})$/i.exec(color || '');
-  if (!m) return color;
-  const n = parseInt(m[1], 16);
-  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},0.2)`;
+  const c = parseColor(color || '');                       // auch Kurzform (#c00) und rgb()
+  if (!c) return color;
+  return `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},0.2)`;
 }
 /* ---------------- Zirkel ----------------
    1) Spitze auf den Mittelpunkt setzen und nach außen ziehen: legt den Radius fest (in cm angezeigt).
@@ -4479,7 +4559,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 64;
+const APP_VERSION = 66;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4661,8 +4741,10 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.0': ['„Einfügen“ mit dem Finger erscheint erst nach 3 Sekunden Halten (nicht mehr aus Versehen beim Scrollen)'],
+  '4.9': ['Im PDF sind Textfelder, Stempeltexte und Tabellen jetzt echte Schrift statt Bild – am PC beim Heranzoomen gestochen scharf (Schreibschrift bleibt Bild)'],
   '4.8': ['Im PDF ist die Maßzahl der Bemaßung jetzt echte Schrift statt Bild – bleibt am PC beim Zoomen scharf'],
-  '4.7': ['Menü ⋮ beim Bearbeiten lässt sich scrollen, wenn es nicht auf den Bildschirm passt', 'Antippen mit dem Finger wählt nur noch Bilder aus (Text und Handschrift nicht mehr)', '„Einfügen“ erscheint mit dem Finger schneller (knapp eine halbe Sekunde halten), auch wenn der Finger leicht zittert'],
+  '4.7': ['Menü ⋮ beim Bearbeiten lässt sich scrollen, wenn es nicht auf den Bildschirm passt', 'Antippen mit dem Finger wählt nur noch Bilder aus (Text und Handschrift nicht mehr)', '„Einfügen“ mit dem Finger: leichtes Zittern bricht das Halten nicht mehr ab'],
   '4.6': ['Mit dem Finger auf ein Objekt, einen Text, ein Bild oder einen Stempel tippen wählt es aus – auch wenn „Mit dem Finger zeichnen“ aus ist. Danach mit dem Finger verschieben, an den Griffen skalieren oder drehen'],
   '4.5': ['Bemaßung wie im CAD: von Punkt zu Punkt messen, dann mit einem zweiten Zug die Maßlinie parallel herausziehen (Maßhilfslinien wachsen mit); Punkte rasten an Ecken und Linienenden ein', 'Bilder, Texte und Stempel lassen sich viel flüssiger verschieben'],
   '4.4': ['Neue Textfelder starten klein und wachsen beim Schreiben mit – danach passt die Breite genau zum Text', 'Verschieben von Texten und Textbausteinen deutlich flüssiger'],
