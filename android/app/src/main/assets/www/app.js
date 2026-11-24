@@ -563,6 +563,7 @@ function xform(src, fn, k, da = 0, kx = k, ky = k) {
     if (it.t === 'img') { it.h *= ky; h1 = it.h; if (da) it.rot = ((it.rot || 0) + da) % (Math.PI * 2); }
     else if (it.t === 'table') { it.h *= ky; h1 = it.h; if (kx === ky) it.size *= k; }   // Tabelle bleibt gerade, Schrift wächst nur gleichmäßig
     else if (kx === ky) { it.size *= k; if (it.h) it.h *= k; h1 = h0 * k; }   // Text: nur gleichmäßig wächst die Schrift
+    else if (it.t === 'text') delete it.auto;                                // Breite von Hand gezogen: danach nicht mehr automatisch
     it.x = cx - it.w / 2; it.y = cy - h1 / 2;
   }
   return it;
@@ -856,19 +857,30 @@ function drawAdded(pe, p, items) {
 function renderText(pe, p) {
   const sc = scale();
   const have = new Map([...pe.text.children].map(n => [n.dataset.id, n]));
+  // Nur geänderte Textfelder anfassen und erst alle schreiben, dann alle messen:
+  // sonst erzwingt jedes Feld eine eigene Layout-Berechnung (beim Verschieben ruckelte das spürbar).
+  const measure = [];
   for (const it of p.items) {
     if (it.t !== 'text') continue;
     let n = have.get(it.id);
     if (n) have.delete(it.id);
     else { n = document.createElement('div'); n.className = 'tx'; n.dataset.id = it.id; pe.text.appendChild(n); }
+    const ed = !!(S.editing && S.editing.it.id === it.id);
+    const key = [sc, it.x, it.y, it.w, it.size, it.bold, it.font, it.color, ed, ed ? '' : it.text, it.auto].join('|');
+    if (n._k === key && it.h) continue;
+    n._k = key;
+    // neues Textfeld beim Tippen: wächst mit dem Text bis zum Seitenrand (statt gleich sehr breit zu sein)
+    const auto = ed && it.auto, maxW = Math.max(40, p.w - it.x - 6);
     Object.assign(n.style, {
-      left: it.x * sc + 'px', top: it.y * sc + 'px', width: it.w * sc + 'px',
+      left: it.x * sc + 'px', top: it.y * sc + 'px',
+      width: auto ? 'max-content' : it.w * sc + 'px', minWidth: auto ? Math.min(30, maxW) * sc + 'px' : '', maxWidth: auto ? maxW * sc + 'px' : '',
       // nur das Eingabefeld beim Tippen ist sichtbar; sonst zeichnet der Canvas den Text in der richtigen Ebene
-      fontSize: it.size * sc + 'px', color: S.editing && S.editing.it.id === it.id ? it.color : 'transparent', fontWeight: it.bold ? '700' : '400', fontFamily: fontOf(it)
+      fontSize: it.size * sc + 'px', color: ed ? it.color : 'transparent', fontWeight: it.bold ? '700' : '400', fontFamily: fontOf(it)
     });
-    if (!(S.editing && S.editing.it.id === it.id)) n.textContent = it.text;
-    it.h = n.offsetHeight / sc || it.size * 1.35;
+    if (!ed) n.textContent = it.text;
+    measure.push([it, n]);
   }
+  for (const [it, n] of measure) it.h = n.offsetHeight / sc || it.size * 1.35;
   have.forEach(n => n.remove());
 }
 function refreshPage(p) {
@@ -2628,8 +2640,9 @@ function textTap(p, x, y) {
   let it = hit;
   if (it) { it = { ...hit }; p.items[p.items.indexOf(hit)] = it; }   // bearbeitet wird eine Kopie
   else {
-    it = { t: 'text', id: uid(), x, y: y - prefs.textSize * 0.68, w: Math.min(340, p.w - x - 14), text: '', size: prefs.textSize, color: prefs.color, bold: prefs.bold, font: prefs.textFont || 'sans' };
-    if (it.w < 80) { it.w = 180; it.x = Math.max(8, p.w - 190); }
+    // klein anfangen und beim Tippen mitwachsen (bis zum Seitenrand, dann Umbruch)
+    it = { t: 'text', id: uid(), x, y: y - prefs.textSize * 0.68, w: 30, auto: true, text: '', size: prefs.textSize, color: prefs.color, bold: prefs.bold, font: prefs.textFont || 'sans' };
+    if (p.w - x - 6 < 100) it.x = Math.max(8, p.w - 106);
     p.items.push(it);
   }
   S.editing = { p, it, before };
@@ -2666,7 +2679,12 @@ function commitText() {
   const { p, it, before } = ed;
   const pe = pageEls.get(p.id);
   const n = pe && pe.text.querySelector(`[data-id="${it.id}"]`);
-  if (n) { it.text = n.innerText.replace(/\n$/, ''); n.contentEditable = 'false'; n.classList.remove('editing'); }
+  if (n) {
+    it.text = n.innerText.replace(/\n$/, '');
+    // mitwachsendes Feld: Breite auf den geschriebenen Text setzen (ragt so nicht mehr übers Blatt hinaus)
+    if (it.auto) { const sc = scale(); it.w = clamp(n.getBoundingClientRect().width / sc + 3, 12, Math.max(12, p.w - it.x - 4)); }
+    n.contentEditable = 'false'; n.classList.remove('editing');
+  }
   if (!it.text.trim()) p.items = p.items.filter(i => i !== it);
   syncTextOpts();
   if (pe) { renderText(pe, p); renderInk(pe, p); }
@@ -4318,7 +4336,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 59;
+const APP_VERSION = 60;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4500,6 +4518,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.4': ['Neue Textfelder starten klein und wachsen beim Schreiben mit – danach passt die Breite genau zum Text', 'Verschieben von Texten und Textbausteinen deutlich flüssiger'],
   '4.3': ['Bemaßung neben dem Lineal: Maßlinie mit Maßzahl, Maßstab (1:1 bis 1:500 oder eigener), Einheit und Nachkommastellen einstellbar; Maßzahl lässt sich überschreiben', 'Statik: Durchlaufträger und andere Balkensysteme ohne Gelenkkreis im Balken über den Lagern'],
   '4.2': ['Tabellen wie in LibreOffice: Zeilen, Spalten und Kopfzeile wählen, Zellen ausfüllen, später über „Tabelle bearbeiten“ ändern (▦ Tabelle beim Text-Werkzeug oder im Menü ⋮)', 'Mathe: Matrizen beliebiger Größe (bis 8×8) mit runden, eckigen, Betrags- oder geschweiften Klammern'],
   '4.1': ['Smarte Hilfslinien: Beim Verschieben und Skalieren rasten Objekte an Kanten und Mitten anderer Objekte und an der Seitenmitte ein (im Menü ⋮ abschaltbar)', 'Ausrichten: markierte Objekte links, mittig, rechts, oben, unten ausrichten oder gleichmäßig verteilen'],
