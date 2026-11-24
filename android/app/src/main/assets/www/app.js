@@ -1579,7 +1579,7 @@ function onDown(e) {
         const p = pageAt(g.sx, g.sy); if (!p) return;
         g.lp = true; navigator.vibrate?.(15);
         const [x, y] = toPage(p, g.sx, g.sy); showPasteChip(p, x, y);
-      }, 3000);                                               // bewusst lang: mit dem Finger erst nach 3 s halten
+      }, 2000);                                               // bewusst lang: mit dem Finger erst nach 2 s halten
     }
     else if (pts.length === 2) {
       stopFling();
@@ -1681,7 +1681,7 @@ function startAct(tool, p, e, extra = {}) {
   if ((tool === 'shape' && prefs.shape !== 'compass') || tool === 'lasso' || tool === 'text') {
     // langes Drücken ohne Bewegung → „Einfügen“ (Stift/Marker: über die Halteerkennung in onHold)
     const a = act;
-    a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 3000);
+    a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 2000);
   }
   if (tool === 'shape' && prefs.shape === 'compass') { compassStart(act); return; }
   if (tool === 'stamp') { stampPreview(act); return; }
@@ -1713,7 +1713,7 @@ function startAct(tool, p, e, extra = {}) {
         const [fx, fy, h] = fangAt(act, x, y); Object.assign(act.recog, { x1: fx, y1: fy, x2: fx, y2: fy }); act.fA = h;
       }
       const a = act;
-      a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 3000);
+      a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 2000);
     } else holdCheck(x, y);
   } else if (tool === 'eraser') {
     eraseAt(x, y); drawEraser(x, y);
@@ -1746,9 +1746,9 @@ function onHold(a) {
   if (pts.length) {
     const p0 = pts[0];
     const still = () => a.item.pts.every(q => Math.hypot(q[0] - p0[0], q[1] - p0[1]) * a.k < 8);
-    if (still()) {   // Stift steht still: „Einfügen“ erst nach insgesamt 3 s Halten
+    if (still()) {   // Stift steht still: „Einfügen“ erst nach insgesamt 2 s Halten
       clearTimeout(a.lpT);
-      a.lpT = setTimeout(() => { if (act === a && !a.recog && still() && getClip()) longPressPaste(a, p0[0], p0[1]); }, 2400);
+      a.lpT = setTimeout(() => { if (act === a && !a.recog && still() && getClip()) longPressPaste(a, p0[0], p0[1]); }, 1400);
       return;
     }
   }
@@ -2445,7 +2445,7 @@ function tapSelect(p, x, y) {
   const r = 8 / scale();
   const hit = [...p.items].reverse().find(it => hitItem(it, x, y, r));
   setSel(hit ? { p, ids: new Set([hit.id]) } : null);
-  if (!hit && getClip()) showPasteChip(p, x, y);
+  // „Einfügen“ nicht mehr beim einfachen Antippen – nur nach 3 s Halten (Wunsch: nicht aus Versehen)
 }
 
 /* ---------------- Zwischenablage (auch zwischen Seiten und Notizen) ---------------- */
@@ -2751,7 +2751,7 @@ function selAction(a) {
   const { p, ids } = S.sel, before = snap(p);
   if (a === 'copy' || a === 'cut') {
     setClip(p.items.filter(i => ids.has(i.id)));
-    toast(a === 'copy' ? 'Kopiert. Mit dem Lasso auf eine freie Stelle tippen zum Einfügen.' : 'Ausgeschnitten. Mit dem Lasso auf eine freie Stelle tippen zum Einfügen.', 3500);
+    toast((a === 'copy' ? 'Kopiert.' : 'Ausgeschnitten.') + ' Zum Einfügen auf eine freie Stelle 2 Sekunden ruhig halten.', 3500);
     if (a === 'copy') return;
   }
   if (a === 'del' || a === 'cut') { p.items = p.items.filter(i => !ids.has(i.id)); setSel(null); }
@@ -4561,7 +4561,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 66;
+const APP_VERSION = 67;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4672,7 +4672,7 @@ const TUTORIAL = [
     <li><b>Lineal</b>: Jeder Strich wird eine gerade Linie; Winkel und Länge werden angezeigt.</li>
     <li><b>Bemaßung</b> (neben dem Lineal): Von Punkt A zu Punkt B ziehen (rastet an Ecken und Linienenden ein, pinker Kreis), absetzen, dann irgendwo aufsetzen und seitlich ziehen – die Maßlinie wandert parallel heraus; kurz tippen = so lassen. Später mit dem Lasso: mittlerer Griff = Abstand, Endgriffe = Messpunkte. Daneben stellst du <b>Maßstab</b> (z. B. 1:50), Einheit und Nachkommastellen ein. Die Zahl lässt sich überschreiben: Maß markieren → „Maßzahl ändern“; die Enden kannst du mit dem Lasso verschieben, die Zahl rechnet sich neu.</li>
     <li><b>S Pen-Taste</b> gedrückt halten = Radierer. <b>Kritzeln</b> über Geschriebenes löscht es (abschaltbar im Menü ⋮).</li>
-    <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist (Stift oder Finger 3 Sekunden ruhig halten).</li></ul>` },
+    <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist (Stift oder Finger 2 Sekunden ruhig halten).</li></ul>` },
   { t: 'Textmarker und Zauberstift', i: '[data-tool="marker"]', h: `<h3>Textmarker</h3><ul>
     <li>Legt sich standardmäßig <b>hinter</b> die Schrift, damit sie lesbar bleibt (Knopf in der Leiste).</li>
     <li>Die <b>Transparenz</b> stellst du mit dem Regler-Knopf ein.</li>
@@ -4743,6 +4743,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.1': ['„Einfügen“ erscheint auch mit dem Lasso nicht mehr beim einfachen Antippen – überall nur nach 2 Sekunden ruhigem Halten'],
   '5.0': ['„Einfügen“ erscheint erst nach 3 Sekunden Halten – mit dem Finger und mit dem Stift (nicht mehr aus Versehen)'],
   '4.9': ['Im PDF sind Textfelder, Stempeltexte und Tabellen jetzt echte Schrift statt Bild – am PC beim Heranzoomen gestochen scharf (Schreibschrift bleibt Bild)'],
   '4.8': ['Im PDF ist die Maßzahl der Bemaßung jetzt echte Schrift statt Bild – bleibt am PC beim Zoomen scharf'],
