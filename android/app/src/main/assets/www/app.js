@@ -1681,7 +1681,7 @@ function startAct(tool, p, e, extra = {}) {
   if ((tool === 'shape' && prefs.shape !== 'compass') || tool === 'lasso' || tool === 'text') {
     // langes Drücken ohne Bewegung → „Einfügen“ (Stift/Marker: über die Halteerkennung in onHold)
     const a = act;
-    a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 600);
+    a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 3000);
   }
   if (tool === 'shape' && prefs.shape === 'compass') { compassStart(act); return; }
   if (tool === 'stamp') { stampPreview(act); return; }
@@ -1713,7 +1713,7 @@ function startAct(tool, p, e, extra = {}) {
         const [fx, fy, h] = fangAt(act, x, y); Object.assign(act.recog, { x1: fx, y1: fy, x2: fx, y2: fy }); act.fA = h;
       }
       const a = act;
-      a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 600);
+      a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 3000);
     } else holdCheck(x, y);
   } else if (tool === 'eraser') {
     eraseAt(x, y); drawEraser(x, y);
@@ -1745,8 +1745,10 @@ function onHold(a) {
   const pts = a.item.pts;
   if (pts.length) {
     const p0 = pts[0];
-    if (pts.every(q => Math.hypot(q[0] - p0[0], q[1] - p0[1]) * a.k < 8)) {   // Stift stand still
-      if (getClip()) longPressPaste(a, p0[0], p0[1]);
+    const still = () => a.item.pts.every(q => Math.hypot(q[0] - p0[0], q[1] - p0[1]) * a.k < 8);
+    if (still()) {   // Stift steht still: „Einfügen“ erst nach insgesamt 3 s Halten
+      clearTimeout(a.lpT);
+      a.lpT = setTimeout(() => { if (act === a && !a.recog && still() && getClip()) longPressPaste(a, p0[0], p0[1]); }, 2400);
       return;
     }
   }
@@ -4670,7 +4672,7 @@ const TUTORIAL = [
     <li><b>Lineal</b>: Jeder Strich wird eine gerade Linie; Winkel und Länge werden angezeigt.</li>
     <li><b>Bemaßung</b> (neben dem Lineal): Von Punkt A zu Punkt B ziehen (rastet an Ecken und Linienenden ein, pinker Kreis), absetzen, dann irgendwo aufsetzen und seitlich ziehen – die Maßlinie wandert parallel heraus; kurz tippen = so lassen. Später mit dem Lasso: mittlerer Griff = Abstand, Endgriffe = Messpunkte. Daneben stellst du <b>Maßstab</b> (z. B. 1:50), Einheit und Nachkommastellen ein. Die Zahl lässt sich überschreiben: Maß markieren → „Maßzahl ändern“; die Enden kannst du mit dem Lasso verschieben, die Zahl rechnet sich neu.</li>
     <li><b>S Pen-Taste</b> gedrückt halten = Radierer. <b>Kritzeln</b> über Geschriebenes löscht es (abschaltbar im Menü ⋮).</li>
-    <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist.</li></ul>` },
+    <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist (Stift oder Finger 3 Sekunden ruhig halten).</li></ul>` },
   { t: 'Textmarker und Zauberstift', i: '[data-tool="marker"]', h: `<h3>Textmarker</h3><ul>
     <li>Legt sich standardmäßig <b>hinter</b> die Schrift, damit sie lesbar bleibt (Knopf in der Leiste).</li>
     <li>Die <b>Transparenz</b> stellst du mit dem Regler-Knopf ein.</li>
@@ -4741,7 +4743,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
-  '5.0': ['„Einfügen“ mit dem Finger erscheint erst nach 3 Sekunden Halten (nicht mehr aus Versehen beim Scrollen)'],
+  '5.0': ['„Einfügen“ erscheint erst nach 3 Sekunden Halten – mit dem Finger und mit dem Stift (nicht mehr aus Versehen)'],
   '4.9': ['Im PDF sind Textfelder, Stempeltexte und Tabellen jetzt echte Schrift statt Bild – am PC beim Heranzoomen gestochen scharf (Schreibschrift bleibt Bild)'],
   '4.8': ['Im PDF ist die Maßzahl der Bemaßung jetzt echte Schrift statt Bild – bleibt am PC beim Zoomen scharf'],
   '4.7': ['Menü ⋮ beim Bearbeiten lässt sich scrollen, wenn es nicht auf den Bildschirm passt', 'Antippen mit dem Finger wählt nur noch Bilder aus (Text und Handschrift nicht mehr)', '„Einfügen“ mit dem Finger: leichtes Zittern bricht das Halten nicht mehr ab'],
