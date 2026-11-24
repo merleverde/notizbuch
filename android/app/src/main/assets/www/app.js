@@ -393,7 +393,8 @@ const HATCHES = {
   wood:     { label: 'Holz',       title: 'Holz in Faserrichtung (entlang der langen Seite)' },
   endgrain: { label: 'Hirnholz',   title: 'Hirnholz: Auskreuzung von Ecke zu Ecke' },
   soil:     { label: 'Erdreich',   title: 'Erdreich (gewachsener Boden): Dreiergruppen unter 45°' },
-  insul:    { label: 'Dämmung',    title: 'Dämmstoff (weich): Schlaufen über die ganze Dicke, entlang der langen Seite' }
+  insul:    { label: 'Dämmung weich', title: 'Weicher Dämmstoff: Bögen und sich kreuzende Schrägen über die ganze Dicke' },
+  insulHard: { label: 'Dämmung hart', title: 'Harter Dämmstoff: Zickzack über die ganze Dicke' }
 };
 // Teilstücke der Strecke a–b, die innerhalb des (geschlossenen) Vielecks liegen
 function clipSeg(a, b, poly) {
@@ -440,15 +441,25 @@ function hatchFamily(poly, ang, s, wave = 0, sc = 1, group = [0]) {
   return out;
 }
 // Dämmstoff: Schlaufenlinie (Trochoide) entlang der langen Seite, Schlaufen reichen über die ganze Dicke
-function insulLines(it, poly, sc) {
+function insulLines(it, poly, sc, hard) {
+  // Dämmstoff quer über die ganze Dicke, fortlaufend entlang der langen Seite
+  //   weich: Bögen oben und unten (Durchmesser = Teilung), dazwischen sich kreuzende Schrägen
+  //   hart:  Zickzack zwischen den beiden Rändern
   const ang = grainAngle(it, poly), c = Math.cos(ang), sn = Math.sin(ang);
   const pn = poly.map(([x, y]) => -x * sn + y * c), pd = poly.map(([x, y]) => x * c + y * sn);
-  const n0 = Math.min(...pn), n1 = Math.max(...pn), d0 = Math.min(...pd), d1 = Math.max(...pd);
-  const T = n1 - n0; if (T < 4 * sc) return [];               // zu dünn für Schlaufen
-  const m = (n0 + n1) / 2, A = T * 0.42, a = Math.max(3 * sc, T * 0.5) / (2 * Math.PI), b = a * 2.6;
+  const n0 = Math.min(...pn) + 0.3, n1 = Math.max(...pn) - 0.3, d0 = Math.min(...pd), d1 = Math.max(...pd);
+  const T = n1 - n0; if (T < 4 * sc) return [];               // zu dünn
+  const p = Math.max(hard ? 0.25 * T : 0.2 * T, 2.5 * sc, (d1 - d0) / 400), r = p / 2;
   const P = (t, o) => [t * c - o * sn, t * sn + o * c], line = [];
-  const step = Math.max(0.2, (d1 - d0 + 4 * b) / a / 3000);
-  for (let f = 0; ; f += step) { const t = d0 - 2 * b + a * f - b * Math.sin(f); line.push(P(t, m - A * Math.cos(f))); if (t > d1 + b) break; }
+  const arc = (cx, cy, a0, a1) => { for (let i = 0; i <= 10; i++) { const a = a0 + (a1 - a0) * i / 10; line.push(P(cx + r * Math.cos(a), cy + r * Math.sin(a))); } };
+  for (let x = Math.floor(d0 / p) * p - p; x < d1 + p; x += p) {
+    if (hard) { line.push(P(x, n1), P(x + r, n0)); continue; }
+    if (T < 2 * p) { line.push(P(x, n1), P(x + r, n0)); continue; }  // flach: ohne Bögen
+    arc(x + r, n0 + r, Math.PI, 2 * Math.PI);              // Bogen am einen Rand (x … x+p)
+    line.push(P(x + r, n1 - r));                            // Schräge zurück zur Mitte
+    arc(x + p, n1 - r, Math.PI, 0);                         // Bogen am anderen Rand (x+r … x+3r)
+    line.push(P(x + p, n0 + r));                            // Schräge zum nächsten Bogen
+  }
   return clipLine(line, poly);
 }
 // gerade Linien in Striche zerlegen (Raster entlang der Richtung ang: Striche benachbarter Linien liegen gleich)
@@ -486,7 +497,7 @@ function hatchLines(it, sc = 1) {
   else if (it.hatch === 'steel') lines = hatchFamily(poly, -Q, 2.5 * sc);
   else if (it.hatch === 'wood') lines = hatchFamily(poly, grainAngle(it, poly), 4.5 * sc, 1 * sc, sc);
   else if (it.hatch === 'soil') lines = hatchFamily(poly, -Q, 12 * sc, 0, sc, [0, 2.2 * sc, 4.4 * sc]);
-  else if (it.hatch === 'insul') lines = insulLines(it, poly, sc);
+  else if (it.hatch === 'insul' || it.hatch === 'insulHard') lines = insulLines(it, poly, sc, it.hatch === 'insulHard');
   else if (it.hatch === 'endgrain') {
     let a, b, c, d;
     if (it.kind === 'poly' && it.pts.length === 4) [a, b, c, d] = it.pts;
@@ -4902,7 +4913,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
-  '5.2': ['Neue Schraffuren für Formen (Bauwesen): Holz mit Faser, Hirnholz, Stahl, Stahlbeton (45°, abwechselnd durchgezogen und gestrichelt), Erdreich und Dämmstoff – Knopf neben „Füllung“; bereits gezeichnete Formen über das Stil-Menü schraffieren', 'Schraffuren bleiben im PDF scharfe Linien'],
+  '5.2': ['Neue Schraffuren für Formen (Bauwesen): Holz mit Faser, Hirnholz, Stahl, Stahlbeton (45°, abwechselnd durchgezogen und gestrichelt), Erdreich, Dämmung weich und Dämmung hart – Knopf neben „Füllung“; bereits gezeichnete Formen über das Stil-Menü schraffieren', 'Schraffuren bleiben im PDF scharfe Linien'],
   '5.1': ['„Einfügen“ erscheint auch mit dem Lasso nicht mehr beim einfachen Antippen – überall nur nach 2 Sekunden ruhigem Halten'],
   '5.0': ['„Einfügen“ erscheint erst nach 3 Sekunden Halten – mit dem Finger und mit dem Stift (nicht mehr aus Versehen)'],
   '4.9': ['Im PDF sind Textfelder, Stempeltexte und Tabellen jetzt echte Schrift statt Bild – am PC beim Heranzoomen gestochen scharf (Schreibschrift bleibt Bild)'],
