@@ -303,23 +303,30 @@ function dimLabel(it) {
   const u = it.unit ?? 'm', v = u === 'm' ? mm / 1000 : u === 'cm' ? mm / 10 : mm, dec = it.dec ?? 2;
   return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (u ? ' ' + u : '');
 }
+function dimPts(it) {
+  const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) || 1, nx = -(it.y2 - it.y1) / len, ny = (it.x2 - it.x1) / len, o = it.off || 0;
+  return { nx, ny, a: [it.x1 + nx * o, it.y1 + ny * o], b: [it.x2 + nx * o, it.y2 + ny * o] };
+}
 function drawDim(ctx, it) {
   const { x1, y1, x2, y2 } = it, len = Math.hypot(x2 - x1, y2 - y1); if (len < 0.5) return;
   const ux = (x2 - x1) / len, uy = (y2 - y1) / len, nx = -uy, ny = ux, fs = dimFs(it);
-  const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4);
+  const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4), o = it.off || 0, sg = Math.sign(o) || 1;
+  const ax = x1 + nx * o, ay = y1 + ny * o, bx = x2 + nx * o, by = y2 + ny * o;     // Maßlinie (parallel verschoben)
   ctx.save();
   ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(x1 - ux * e * 0.5, y1 - uy * e * 0.5); ctx.lineTo(x2 + ux * e * 0.5, y2 + uy * e * 0.5);   // Maßlinie (leicht überstehend)
-  for (const [px, py] of [[x1, y1], [x2, y2]]) {
-    ctx.moveTo(px - nx * e, py - ny * e); ctx.lineTo(px + nx * e, py + ny * e);                       // Maßhilfslinie
+  ctx.moveTo(ax - ux * e * 0.5, ay - uy * e * 0.5); ctx.lineTo(bx + ux * e * 0.5, by + uy * e * 0.5);   // Maßlinie (leicht überstehend)
+  for (const [px, py, qx, qy] of [[x1, y1, ax, ay], [x2, y2, bx, by]]) {
+    // Maßhilfslinie: vom gemessenen Punkt (kleine Lücke) bis etwas über die Maßlinie hinaus
+    if (Math.abs(o) > e) { const g = Math.min(3, Math.abs(o) * 0.2); ctx.moveTo(px + nx * sg * g, py + ny * sg * g); ctx.lineTo(qx + nx * sg * e * 0.6, qy + ny * sg * e * 0.6); }
+    else { ctx.moveTo(qx - nx * e, qy - ny * e); ctx.lineTo(qx + nx * e, qy + ny * e); }
     const dx = (ux + nx) * Math.SQRT1_2 * t, dy = (uy + ny) * Math.SQRT1_2 * t;                      // 45°-Schrägstrich
-    ctx.moveTo(px - dx, py - dy); ctx.lineTo(px + dx, py + dy);
+    ctx.moveTo(qx - dx, qy - dy); ctx.lineTo(qx + dx, qy + dy);
   }
   ctx.stroke();
   // Maßzahl mittig über der Linie, immer lesbar (nie kopfüber)
   let a = Math.atan2(y2 - y1, x2 - x1); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
-  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, off = fs * 0.35 + it.size;
+  const mx = (ax + bx) / 2, my = (ay + by) / 2, off = fs * 0.35 + it.size;
   ctx.translate(mx, my); ctx.rotate(a);
   ctx.fillStyle = it.color; ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
   ctx.fillText(dimLabel(it), 0, -off);
@@ -413,6 +420,7 @@ const loadImages = items => Promise.all(items.filter(i => i.t === 'img').map(i =
 /* In Zeichenreihenfolge malen: so liegt Abdeck-Weiß über altem Inhalt und neue Schrift darüber */
 function drawItems(ctx, items, onImg) {
   for (const it of items) {
+    if (S.hideIds && S.hideIds.has(it.id)) continue;        // wird gerade als Vorschaubild verschoben
     if (it.t === 'img') {
       const im = getImg(it.src, onImg); if (!im) continue;
       if (it.rot) { ctx.save(); ctx.translate(it.x + it.w / 2, it.y + it.h / 2); ctx.rotate(it.rot); ctx.drawImage(im, -it.w / 2, -it.h / 2, it.w, it.h); ctx.restore(); }
@@ -498,6 +506,11 @@ function bbox(it) {
     const x = Math.min(...xs), y = Math.min(...ys);
     return { x: x - m, y: y - m, w: Math.max(...xs) - x + 2 * m, h: Math.max(...ys) - y + 2 * m };
   }
+  if (it.t === 'shape' && it.kind === 'dim') {
+    const d = dimPts(it), xs = [it.x1, it.x2, d.a[0], d.b[0]], ys = [it.y1, it.y2, d.a[1], d.b[1]], m = dimFs(it) * 1.6;
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { x: x - m, y: y - m, w: Math.max(...xs) - x + 2 * m, h: Math.max(...ys) - y + 2 * m };
+  }
   if (it.t === 'shape') {
     const m = it.kind === 'arrow' ? Math.max(it.size / 2, headLen(it)) : it.kind === 'dim' ? dimFs(it) * 1.6 : it.size / 2;
     return { x: Math.min(it.x1, it.x2) - m, y: Math.min(it.y1, it.y2) - m, w: Math.abs(it.x2 - it.x1) + 2 * m, h: Math.abs(it.y2 - it.y1) + 2 * m };
@@ -518,6 +531,7 @@ const inBox = (b, x, y, m = 0) => x >= b.x - m && x <= b.x + b.w + m && y >= b.y
 
 function shapeOutline(it) {
   if (it.kind === 'poly') return [...it.pts, it.pts[0]];
+  if (it.kind === 'dim') { const d = dimPts(it); return [[it.x1, it.y1], d.a, d.b, [it.x2, it.y2]]; }
   const { x1, y1, x2, y2 } = it;
   if (it.kind === 'rect') return [[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]];
   if (it.kind === 'ellipse') {
@@ -553,7 +567,7 @@ function xform(src, fn, k, da = 0, kx = k, ky = k) {
     // Rechteck/Ellipse lassen sich nur als Vieleck drehen
     if (da && (it.kind === 'rect' || it.kind === 'ellipse')) { it.pts = shapeOutline(it).slice(0, -1); it.kind = 'poly'; }
     if (it.kind === 'poly') it.pts = it.pts.map(([x, y]) => fn(x, y).map(v => +v.toFixed(2)));
-    else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); }
+    else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); if (it.kind === 'dim' && it.off) it.off *= Math.sqrt(kx * ky); }
   } else {
     // Bild/Text: Mittelpunkt mitführen; Bilder drehen sich mit, Textfelder bleiben gerade
     const h0 = it.t === 'img' || it.t === 'table' ? it.h : (it.h || it.size * 1.35);
@@ -1561,6 +1575,12 @@ function startAct(tool, p, e, extra = {}) {
     act.item = { t: 'stroke', id: uid(), tool: 'cover', color: coverColor(act.p), size: +(prefs.sizes.eraser / act.k).toFixed(2), pts: [] };
     addPts(e);
   } else if (tool === 'pen' || tool === 'marker') {
+    if (tool === 'pen' && prefs.dim && S.dimPending) {
+      // zweiter Zug nach dem Messen: die Maßlinie folgt seitlich dem Stift
+      const pend = S.dimPending; S.dimPending = null;
+      const d = pend.pid === p.id && p.items.find(i => i.id === pend.id);
+      if (d) { Object.assign(act, { tool: 'dimOffset', dim: d, off0: d.off || 0 }); return; }
+    }
     act.item = { t: 'stroke', id: uid(), tool, color: prefs.color, size: prefs.sizes[tool], pts: [] };
     if (tool === 'pen') act.item.style = prefs.penStyle;
     else act.item.alpha = prefs.markerAlpha ?? 0.4;
@@ -1572,7 +1592,10 @@ function startAct(tool, p, e, extra = {}) {
     // Lineal: der Strich wird von Anfang an als Gerade gezogen
     if (prefs.ruler || (tool === 'pen' && prefs.dim)) {
       act.recog = { kind: 'markerLine', x1: x, y1: y, x2: x, y2: y };
-      if (tool === 'pen' && prefs.dim) act.dimMode = true;
+      if (tool === 'pen' && prefs.dim) {
+        act.dimMode = true;
+        const [fx, fy, h] = fangAt(act, x, y); Object.assign(act.recog, { x1: fx, y1: fy, x2: fx, y2: fy }); act.fA = h;
+      }
       const a = act;
       a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 600);
     } else holdCheck(x, y);
@@ -1626,10 +1649,38 @@ function onHold(a) {
 function drawRecog(a) {
   const ctx = a.ctx, r = a.recog;
   ctx.clearRect(0, 0, a.p.w, a.p.h);
-  if (r.kind === 'markerLine' && a.dimMode) drawDim(ctx, dimFromRecog(a));
+  if (r.kind === 'markerLine' && a.dimMode) { drawDim(ctx, dimFromRecog(a)); drawFang(ctx, a, [a.fA && [r.x1, r.y1], a.fB && [r.x2, r.y2]].filter(Boolean)); }
   else if (r.kind === 'markerLine') drawStroke(ctx, { ...a.item, pts: [[r.x1, r.y1, .5], [r.x2, r.y2, .5]] });
   else drawShape(ctx, r);
   if (r.kind === 'markerLine' || r.kind === 'line') drawLineInfo(ctx, r.x1, r.y1, r.x2, r.y2, a.k);
+}
+/* Fangpunkte für die Bemaßung: Ecken von Formen, Linienenden, Knicke von Stempel-Linien, Ecken von Bildern/Tabellen */
+function fangPoints(p, excl) {
+  const out = [];
+  for (const it of p.items) {
+    if (excl && excl.has(it.id)) continue;
+    if (it.t === 'shape') {
+      if (it.kind === 'poly') out.push(...it.pts);
+      else if (it.kind === 'ellipse') { const cx = (it.x1 + it.x2) / 2, cy = (it.y1 + it.y2) / 2; out.push([cx, cy], [it.x1, cy], [it.x2, cy], [cx, it.y1], [cx, it.y2]); }
+      else if (it.kind === 'rect') out.push([it.x1, it.y1], [it.x2, it.y1], [it.x1, it.y2], [it.x2, it.y2]);
+      else out.push([it.x1, it.y1], [it.x2, it.y2]);
+    } else if (it.t === 'stroke') {
+      if (it.style === 'shape' && it.pts.length <= 40) out.push(...it.pts);
+      else if (it.pts.length) out.push(it.pts[0], it.pts[it.pts.length - 1]);
+    } else if (it.t === 'img' || it.t === 'table') out.push([it.x, it.y], [it.x + it.w, it.y], [it.x, it.y + it.h], [it.x + it.w, it.y + it.h]);
+  }
+  return out;
+}
+function fangAt(a, x, y, excl) {
+  const pts = (a.fp ||= fangPoints(a.p, excl)), thr = 11 / a.k;
+  let best = null, bd = thr;
+  for (const q of pts) { const d = Math.hypot(q[0] - x, q[1] - y); if (d < bd) { bd = d; best = q; } }
+  return best ? [best[0], best[1], true] : [x, y, false];
+}
+function drawFang(ctx, a, pts) {
+  ctx.save(); ctx.strokeStyle = '#e0337a'; ctx.lineWidth = 1.5 / a.k;
+  for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, 6 / a.k, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.restore();
 }
 function dimFromRecog(a) {
   const r = a.recog, pen = prefs.sizes.pen || 1.5;
@@ -1673,7 +1724,9 @@ function addPts(e) {
     const r = act.recog;
     if (r.kind === 'line' || r.kind === 'markerLine') {
       const [x, y] = toPageA(e.clientX, e.clientY);
-      [r.x2, r.y2] = snapLine(r.x1, r.y1, x, y); drawRecog(act);
+      if (act.dimMode) { const [fx, fy, h] = fangAt(act, x, y); act.fB = h; [r.x2, r.y2] = h ? [fx, fy] : snapLine(r.x1, r.y1, x, y); }
+      else [r.x2, r.y2] = snapLine(r.x1, r.y1, x, y);
+      drawRecog(act);
     }
     return;
   }
@@ -1983,6 +2036,13 @@ function moveAct(e) {
   if (t === 'pen' || t === 'marker' || t === 'cover') addPts(e);
   else if (t === 'eraser') { eraseAt(x, y); drawEraser(x, y); }
   else if (t === 'restyle') restyleAt(x, y);
+  else if (t === 'dimOffset') {
+    const d = act.dim, { nx, ny } = dimPts(d), p = act.p;
+    const off = +(act.off0 + (x - act.x0) * nx + (y - act.y0) * ny).toFixed(2);
+    const nd = { ...d, off }, old = act.cur || d;
+    p.items = p.items.map(i => i.id === d.id ? nd : i);
+    act.cur = nd; renderRegionSoon(act.pe, p, unionBox([bbox(old), bbox(nd)]));
+  }
   else if (t === 'lasso') {
     act.poly.push([x, y]);
     ctx.clearRect(0, 0, act.p.w, act.p.h);
@@ -2039,8 +2099,14 @@ function moveAct(e) {
     applySel((a, b) => [ax + (a - ax) * f, ay + (b - ay) * f], f);
   } else if (t === 'lineEnd') {
     // Linienende ziehen: das andere Ende bleibt stehen, rastet bei 0°/45°/90° ein
-    const i = act.end, o = 3 - i, src = [...act.orig.values()][0];
-    const [nx, ny] = snapLine(src['x' + o], src['y' + o], x, y);
+    const i = act.end, src = [...act.orig.values()][0];
+    if (i === 3) {   // Maßlinie parallel verschieben
+      const { nx: qx, ny: qy } = dimPts(src), off = +((x - src.x1) * qx + (y - src.y1) * qy).toFixed(2);
+      applySel(null, 1, 0, 1, 1, { ...src, off }); ctx.clearRect(0, 0, act.p.w, act.p.h); return;
+    }
+    const o = 3 - i;
+    let [nx, ny] = snapLine(src['x' + o], src['y' + o], x, y);
+    if (src.kind === 'dim') { const [fx, fy, h] = fangAt(act, x, y, act.orig); if (h) [nx, ny] = [fx, fy]; }
     const it = { ...src, ['x' + i]: +nx.toFixed(2), ['y' + i]: +ny.toFixed(2) };
     applySel(null, 1, 0, 1, 1, it);
     ctx.clearRect(0, 0, act.p.w, act.p.h);
@@ -2209,10 +2275,13 @@ function addStrokes(pe, p, items) {
 }
 function endAct(e) {
   if (act.tool === 'btnErase') { finishBtnPage(); act = null; return; }
+  if (act.ghost) ghostFinish();
+  if (act.dimMode && act.recog && e && e.clientX != null && e.type === 'pointerup') addPts(e);   // letzte Stiftposition (Fangpunkt) mitnehmen
   const a = act; act = null;
   const { p, pe, tool } = a;
   clearTimeout(a.hold?.t); clearTimeout(a.lpT);
   if (a.lp) { if (a.ctx) clearLive(pe); return; }       // langes Drücken: nur „Einfügen“ anbieten, nichts zeichnen
+  if (tool === 'dimOffset') { if (a.ctx) clearLive(pe); if (a.cur) commit(p, a.before); return; }
   const snapped = tool === 'marker' && snapRects(a);
   if (snapped) {
     addStrokes(pe, p, snapped); clearLive(pe); commit(p, a.before);
@@ -2222,6 +2291,10 @@ function endAct(e) {
     const it = tiny ? null : a.dimMode ? dimFromRecog(a) : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
     if (it) addStrokes(pe, p, [it]);
     clearLive(pe); commit(p, a.before);
+    if (it && a.dimMode) {
+      S.dimPending = { pid: p.id, id: it.id };
+      if ((prefs.dimOffHint || 0) < 3) { prefs.dimOffHint = (prefs.dimOffHint || 0) + 1; savePrefs(); toast('Jetzt irgendwo aufsetzen und seitlich ziehen: die Maßlinie wandert parallel mit. Kurz tippen = so lassen.', 5000); }
+    }
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
     smoothStroke(a);
     if (tool === 'pen' && scribbleErase(a)) renderInk(pe, p);      // Kritzeln hat gelöscht: Seite neu zeichnen
@@ -2301,7 +2374,7 @@ function selectPoly(p, poly) {
     // nur Objekte, die VOLLSTÄNDIG im Lasso liegen
     let pts;
     if (it.t === 'stroke') pts = it.pts;
-    else if (it.t === 'shape' && ['rect', 'ellipse', 'poly', 'line', 'arrow'].includes(it.kind)) pts = shapeOutline(it);
+    else if (it.t === 'shape' && ['rect', 'ellipse', 'poly', 'line', 'arrow', 'dim'].includes(it.kind)) pts = shapeOutline(it);
     else { const b = bbox(it); pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]; }
     if (pts.length && pts.every(([x, y]) => inPoly(x, y, poly))) ids.add(it.id);
   }
@@ -2347,6 +2420,7 @@ function renderSel() {
   const line = items.length === 1 && items[0].t === 'shape' && ['line', 'arrow', 'dim'].includes(items[0].kind) ? items[0] : null;
   const grips = line
     ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
+      + (line.kind === 'dim' ? (d => `<div class="lend mid" data-i="3" title="Maßlinie parallel verschieben" style="left:${(((d.a[0] + d.b[0]) / 2 - b.x) * sc + pad).toFixed(1)}px;top:${(((d.a[1] + d.b[1]) / 2 - b.y) * sc + pad).toFixed(1)}px"></div>`)(dimPts(line)) : '')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
   el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
@@ -2358,6 +2432,7 @@ function renderSel() {
     const mode = cl.contains('lend') ? 'lineEnd' : cl.contains('handle') || cl.contains('edge') ? 'scale' : cl.contains('rot') ? 'rotate' : 'move';
     const orig = new Map(p.items.filter(i => ids.has(i.id)).map(i => [i.id, structuredClone(i)]));
     startAct(mode, p, e, { orig, axis: cl.contains('ew') ? 'x' : cl.contains('eh') ? 'y' : null, end: +e.target.dataset.i || 0 });
+    if (mode === 'move') ghostStart();
     if (mode === 'scale') {
       // Fixpunkt = gegenüberliegende Ecke bzw. Seite
       const d = e.target.dataset.d || 'se';
@@ -2436,8 +2511,34 @@ function pageUnder(cx, cy) {
   }
   return null;
 }
+function ghostStart() {
+  const a = act, pe = a.pe, p = a.p, sc = scale(), items = [...a.orig.values()];
+  const b0 = unionBox(items.map(bbox)), pad = 4, b = { x: b0.x - pad, y: b0.y - pad, w: b0.w + 2 * pad, h: b0.h + 2 * pad };
+  const R = Math.min(dpr() * sc, Math.sqrt(9e6 / Math.max(1, b.w * b.h)));
+  const c = document.createElement('canvas'); c.className = 'sel-ghost';
+  c.width = Math.max(1, Math.round(b.w * R)); c.height = Math.max(1, Math.round(b.h * R));
+  Object.assign(c.style, { position: 'absolute', left: b.x * sc + 'px', top: b.y * sc + 'px', width: b.w * sc + 'px', height: b.h * sc + 'px', zIndex: 2, pointerEvents: 'none', willChange: 'transform' });
+  const ctx = c.getContext('2d'); ctx.setTransform(R, 0, 0, R, -b.x * R, -b.y * R);
+  drawItems(ctx, items, () => {});
+  pe.el.appendChild(c);
+  S.hideIds = new Set(a.orig.keys());
+  renderRegion(pe, p, b0);
+  Object.assign(a, { ghost: c, gdx: 0, gdy: 0 });
+}
+function ghostMove(dx, dy) {
+  const a = act, sc = scale(), t = `translate(${(dx * sc).toFixed(1)}px, ${(dy * sc).toFixed(1)}px)`;
+  a.gdx = dx; a.gdy = dy; a.ghost.style.transform = t;
+  const sb = a.pe.el.querySelector('.selbox'); if (sb) sb.style.transform = t;
+}
+function ghostFinish() {
+  const a = act; if (!a || !a.ghost) return;
+  const { gdx, gdy } = a;
+  a.ghost.remove(); a.ghost = null; S.hideIds = null;
+  applySel((x, y) => [x + gdx, y + gdy], 1);
+}
 function moveSelTo(cx, cy) {
   const q = pageUnder(cx, cy);
+  if (q && q !== act.p && act.ghost) ghostFinish();      // Seitenwechsel: wieder normal zeichnen
   if (q && q !== act.p) moveSelToPage(q);
   act.rect = act.pe.el.getBoundingClientRect(); act.k = act.rect.width / act.p.w;   // Lage ändert sich beim Scrollen
   const [x, y] = toPageA(cx, cy);
@@ -2449,6 +2550,7 @@ function moveSelTo(cx, cy) {
     if (gx) dx += gx.d; if (gy) dy += gy.d;
     drawGuides(act, { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }, gx, gy);
   }
+  if (act.ghost) return ghostMove(dx, dy);
   applySel((a, b) => [a + dx, b + dy], 1);
 }
 /* Die gezogene Auswahl wechselt auf Seite q: Elemente umziehen, Koordinaten umrechnen, Verlauf beider Seiten merken */
@@ -3476,7 +3578,7 @@ function updToolbar() {
 const COLOR_TOOLS = ['pen', 'marker', 'shape', 'text', 'stamp', 'restyle'];
 prefs.toolColors ||= { marker: COLORS[6] };
 function setTool(t) {
-  commitText();
+  commitText(); S.dimPending = null;
   prefs.tool = t;
   if (t === 'pen' || t === 'marker') prefs.lastDraw = t;
   if (COLOR_TOOLS.includes(t)) {
@@ -4336,7 +4438,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 60;
+const APP_VERSION = 61;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4445,7 +4547,7 @@ const TUTORIAL = [
     <li>Jedes Werkzeug merkt sich <b>seine eigene Farbe</b>.</li>
     <li><b>Form erkennen</b>: Am Ende eines Strichs den Stift kurz halten – aus der Kritzelei wird eine saubere Linie, ein Kreis oder ein Rechteck.</li>
     <li><b>Lineal</b>: Jeder Strich wird eine gerade Linie; Winkel und Länge werden angezeigt.</li>
-    <li><b>Bemaßung</b> (neben dem Lineal): Jeder Strich wird eine Maßlinie mit Maßzahl. Daneben stellst du <b>Maßstab</b> (z. B. 1:50), Einheit und Nachkommastellen ein. Die Zahl lässt sich überschreiben: Maß markieren → „Maßzahl ändern“; die Enden kannst du mit dem Lasso verschieben, die Zahl rechnet sich neu.</li>
+    <li><b>Bemaßung</b> (neben dem Lineal): Von Punkt A zu Punkt B ziehen (rastet an Ecken und Linienenden ein, pinker Kreis), absetzen, dann irgendwo aufsetzen und seitlich ziehen – die Maßlinie wandert parallel heraus; kurz tippen = so lassen. Später mit dem Lasso: mittlerer Griff = Abstand, Endgriffe = Messpunkte. Daneben stellst du <b>Maßstab</b> (z. B. 1:50), Einheit und Nachkommastellen ein. Die Zahl lässt sich überschreiben: Maß markieren → „Maßzahl ändern“; die Enden kannst du mit dem Lasso verschieben, die Zahl rechnet sich neu.</li>
     <li><b>S Pen-Taste</b> gedrückt halten = Radierer. <b>Kritzeln</b> über Geschriebenes löscht es (abschaltbar im Menü ⋮).</li>
     <li><b>Lange auf eine freie Stelle drücken</b> zeigt „Einfügen“, wenn etwas kopiert ist.</li></ul>` },
   { t: 'Textmarker und Zauberstift', i: '[data-tool="marker"]', h: `<h3>Textmarker</h3><ul>
@@ -4518,6 +4620,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '4.5': ['Bemaßung wie im CAD: von Punkt zu Punkt messen, dann mit einem zweiten Zug die Maßlinie parallel herausziehen (Maßhilfslinien wachsen mit); Punkte rasten an Ecken und Linienenden ein', 'Bilder, Texte und Stempel lassen sich viel flüssiger verschieben'],
   '4.4': ['Neue Textfelder starten klein und wachsen beim Schreiben mit – danach passt die Breite genau zum Text', 'Verschieben von Texten und Textbausteinen deutlich flüssiger'],
   '4.3': ['Bemaßung neben dem Lineal: Maßlinie mit Maßzahl, Maßstab (1:1 bis 1:500 oder eigener), Einheit und Nachkommastellen einstellbar; Maßzahl lässt sich überschreiben', 'Statik: Durchlaufträger und andere Balkensysteme ohne Gelenkkreis im Balken über den Lagern'],
   '4.2': ['Tabellen wie in LibreOffice: Zeilen, Spalten und Kopfzeile wählen, Zellen ausfüllen, später über „Tabelle bearbeiten“ ändern (▦ Tabelle beim Text-Werkzeug oder im Menü ⋮)', 'Mathe: Matrizen beliebiger Größe (bis 8×8) mit runden, eckigen, Betrags- oder geschweiften Klammern'],
