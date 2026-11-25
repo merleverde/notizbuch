@@ -13,6 +13,7 @@ const FSA = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
 const NATIVE = !!window.NATIVE_APP;                      // läuft in der Android-App (native.js)
 const revive = h => (window.reviveHandle ? window.reviveHandle(h) : h);
 const A4 = [595.28, 841.89];
+const PAPER = { A0: [2383.94, 3370.39], A1: [1683.78, 2383.94], A2: [1190.55, 1683.78], A3: [841.89, 1190.55], A4, A5: [419.53, 595.28] };
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 /* Schriftarten für Textfelder (alle auf Android eingebaut, funktionieren also auch offline) */
 const FONTS = { sans: FONT, serif: '"Noto Serif", Georgia, "Times New Roman", serif', mono: '"Droid Sans Mono", "Courier New", monospace', hand: '"Dancing Script", cursive' };
@@ -900,6 +901,7 @@ async function renderDetail(pe, p) {
     try { await task.promise; } catch { return; }
     if (pe.dtask !== task) return;
     pe.dtask = null;
+    if (p.noteW) { octx.setTransform(r, 0, 0, r, -x0 * r, -y0 * r); drawNoteArea(octx, p); }
   } else {
     octx.setTransform(r, 0, 0, r, -x0 * r, -y0 * r); drawPaper(octx, p);
   }
@@ -916,6 +918,15 @@ function detailCtx(pe) {
   const { x0, y0, r } = pe.det, ctx = pe.dink.getContext('2d');
   ctx.setTransform(r, 0, 0, r, -x0 * r, -y0 * r);
   return ctx;
+}
+/* Notizfläche rechts neben einer PDF-Seite (p.pw = Breite der PDF-Seite, p.noteW = zusätzliche Breite) */
+function drawNoteArea(ctx, p) {
+  if (!p.noteW) return;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(p.pw, 0, p.noteW, p.h); ctx.clip();
+  drawPaper(ctx, { ...p, bg: p.noteBg || 'grid', pdf: null });
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle = '#9aa6a1'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(p.pw, 0); ctx.lineTo(p.pw, p.h); ctx.stroke(); ctx.restore();
 }
 function renderDetailInk(pe, p) {
   if (!pe.det) return;
@@ -975,6 +986,7 @@ async function renderBg(pe, p) {
   if (pe.task !== task) return;
   pe.task = null;
   if (!pe.visible) return;
+  if (p.noteW) { octx.setTransform(r, 0, 0, r, 0, 0); drawNoteArea(octx, p); }
   sizeCanvas(pe.bg, p, r);
   pe.bg.getContext('2d').drawImage(off, 0, 0);
 }
@@ -1363,6 +1375,13 @@ async function exportOverlay(out, pg, p, withPaper) {
       }
       drawPaper(v, p);
     }
+    if (p.noteW && p.pdf != null && !withPaper) {
+      // Notizfläche: Papier nur rechts neben der PDF-Seite (abgeschnitten auf diesen Bereich)
+      v.ops.push(PDFLib.pushGraphicsState()); v.beginPath(); v.rect(p.pw, 0, p.noteW, p.h); v.ops.push(...v.path, PDFLib.clip(), PDFLib.endPath()); v.cur = {};
+      drawPaper(v, { ...p, bg: p.noteBg || 'grid', pdf: null });
+      v.ops.push(PDFLib.popGraphicsState()); v.cur = {};
+      v.save(); v.strokeStyle = '#9aa6a1'; v.lineWidth = 1; v.beginPath(); v.moveTo(p.pw, 0); v.lineTo(p.pw, p.h); v.stroke(); v.restore();
+    }
     await loadImages(p.items);
     let batch = [];
     const flush = async asText => {
@@ -1406,15 +1425,23 @@ async function exportOverlay(out, pg, p, withPaper) {
       : { x: cb.x, y: cb.y, width: W, height: H });
   }
 }
+// Seitenfläche einer PDF-Seite um ext nach rechts (wie man sie liest) erweitern – auch bei gedrehten Seiten
+function widenPdfPage(pg, ext) {
+  const rot = ((pg.getRotation().angle % 360) + 360) % 360;
+  const grow = b => rot === 90 ? [b.x, b.y, b.width, b.height + ext] : rot === 180 ? [b.x - ext, b.y, b.width + ext, b.height]
+    : rot === 270 ? [b.x, b.y - ext, b.width, b.height + ext] : [b.x, b.y, b.width + ext, b.height];
+  const mb = pg.getMediaBox(), cb = pg.getCropBox();
+  pg.setMediaBox(...grow(mb)); pg.setCropBox(...grow(cb));
+}
 async function buildPdf() {
   const { PDFDocument } = PDFLib;
   const out = await PDFDocument.create();
   const src = S.origBytes ? await PDFDocument.load(S.origBytes, { ignoreEncryption: true }) : null;
   for (const p of S.note.pages) {
     let pg;
-    if (p.pdf != null && src) { [pg] = await out.copyPages(src, [p.pdf]); out.addPage(pg); }
+    if (p.pdf != null && src) { [pg] = await out.copyPages(src, [p.pdf]); out.addPage(pg); if (p.noteW) widenPdfPage(pg, p.noteW); }
     else pg = out.addPage([p.w, p.h]);
-    if (p.pdf != null && src && !p.items.length) continue;
+    if (p.pdf != null && src && !p.items.length && !p.noteW) continue;
     await exportOverlay(out, pg, p, p.pdf == null || !src);
   }
   out.setTitle(S.note.title || 'Notiz');
@@ -1863,6 +1890,7 @@ function startAct(tool, p, e, extra = {}) {
       if (tool === 'pen' && prefs.dim) {
         act.dimMode = true;
         const [fx, fy, h] = fangAt(act, x, y); Object.assign(act.recog, { x1: fx, y1: fy, x2: fx, y2: fy }); act.fA = h;
+        act.hoverSeg = dimHoverAt(p, x, y, act.k)?.seg || null; dimHover = null;   // Antippen einer Linie = sie bemaßen
       }
       const a = act;
       a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 2000);
@@ -1952,6 +1980,72 @@ function drawFang(ctx, a, pts) {
   for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, 6 / a.k, 0, Math.PI * 2); ctx.stroke(); }
   ctx.restore();
 }
+/* Bemaßung: Stift schwebt über einer Linie/Kante → sie leuchtet auf (Ecken: Kreis); Antippen bemaßt sie direkt */
+function dimSegments(p) {
+  const out = [], add = (a, b) => { if (a && b && Math.hypot(b[0] - a[0], b[1] - a[1]) > 2) out.push([[a[0], a[1]], [b[0], b[1]]]); };
+  const ring = (pts, closed) => { for (let i = 1; i < pts.length; i++) add(pts[i - 1], pts[i]); if (closed && pts.length > 2) add(pts[pts.length - 1], pts[0]); };
+  for (const it of p.items) {
+    if (it.t === 'shape') {
+      if (it.kind === 'poly') ring(it.pts, true);
+      else if (it.kind === 'rect') ring([[it.x1, it.y1], [it.x2, it.y1], [it.x2, it.y2], [it.x1, it.y2]], true);
+      else if (it.kind === 'line' || it.kind === 'arrow') add([it.x1, it.y1], [it.x2, it.y2]);
+    } else if (it.t === 'stroke') {
+      if (it.style === 'shape' && it.pts.length <= 40) ring(it.pts, false);
+      else if (it.pts.length === 2) add(it.pts[0], it.pts[1]);
+    } else if ((it.t === 'img' && !it.rot) || it.t === 'table') ring([[it.x, it.y], [it.x + it.w, it.y], [it.x + it.w, it.y + it.h], [it.x, it.y + it.h]], true);
+  }
+  return out;
+}
+const dimGeoCache = new WeakMap();
+function dimGeo(p) {
+  const c = dimGeoCache.get(p), key = p.items.length + ':' + (p.items[p.items.length - 1]?.id || '');
+  if (c && c.items === p.items && c.key === key) return c;
+  const g = { items: p.items, key, pts: fangPoints(p), segs: dimSegments(p) };
+  dimGeoCache.set(p, g); return g;
+}
+function dimHoverAt(p, x, y, k) {
+  const g = dimGeo(p);
+  let corner = null, cd = 11 / k;
+  for (const q of g.pts) { const d = Math.hypot(q[0] - x, q[1] - y); if (d < cd) { cd = d; corner = q; } }
+  if (corner) return { corner: [corner[0], corner[1]] };
+  let seg = null, sd = 10 / k;
+  for (const s of g.segs) { const d = segDist(x, y, s[0][0], s[0][1], s[1][0], s[1][1]); if (d < sd) { sd = d; seg = s; } }
+  return seg ? { seg } : null;
+}
+let dimHover = null;
+function clearDimHover() {
+  if (!dimHover) return;
+  const pe = pageEls.get(dimHover.pid); dimHover = null;
+  if (pe && !act) clearLive(pe);
+}
+function onDimHover(e) {
+  if (e.pointerType !== 'pen' || e.buttons || act || prefs.tool !== 'pen' || !prefs.dim || S.dimPending || !S.note) return clearDimHover();
+  const p = pageAt(e.clientX, e.clientY); if (!p) return clearDimHover();
+  const pe = pageEls.get(p.id), k = pe.el.getBoundingClientRect().width / p.w;
+  const [x, y] = toPage(p, e.clientX, e.clientY), h = dimHoverAt(p, x, y, k), key = h ? JSON.stringify(h) : '';
+  if (dimHover && dimHover.pid === p.id && dimHover.key === key) return;
+  clearDimHover(); if (!h) return;
+  dimHover = { pid: p.id, key };
+  const ctx = prepLive(pe, p);
+  ctx.save(); ctx.strokeStyle = ctx.fillStyle = '#e0337a';
+  if (h.seg) {
+    const [[x1, y1], [x2, y2]] = h.seg;
+    ctx.globalAlpha = 0.35; ctx.lineWidth = 7 / k; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.lineWidth = 1.5 / k;
+    for (const [px, py] of h.seg) { ctx.beginPath(); ctx.arc(px, py, 4 / k, 0, Math.PI * 2); ctx.stroke(); }
+    const fs = 12 / k, t = dimLabel({ x1, y1, x2, y2, scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2 }) + ' – antippen';
+    ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'bottom';
+    const tw = ctx.measureText(t).width, mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 10 / k;
+    ctx.fillStyle = 'rgba(28,35,33,.85)'; ctx.fillRect(mx - tw / 2 - 5 / k, my - fs - 4 / k, tw + 10 / k, fs + 7 / k);
+    ctx.fillStyle = '#fff'; ctx.fillText(t, mx - tw / 2, my);
+  } else {
+    ctx.lineWidth = 2 / k; ctx.beginPath(); ctx.arc(h.corner[0], h.corner[1], 7 / k, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+}
+wrap.addEventListener('pointermove', onDimHover);
+wrap.addEventListener('pointerleave', clearDimHover);
 function dimFromRecog(a) {
   const r = a.recog, pen = prefs.sizes.pen || 1.5;
   return { t: 'shape', id: a.dimId ||= uid(), kind: 'dim', x1: +r.x1.toFixed(2), y1: +r.y1.toFixed(2), x2: +r.x2.toFixed(2), y2: +r.y2.toFixed(2),
@@ -2557,6 +2651,8 @@ function endAct(e) {
     addStrokes(pe, p, snapped); clearLive(pe); commit(p, a.before);
   } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
+    // nur angetippt, aber auf einer Linie/Kante: genau diese Strecke bemaßen
+    if (a.dimMode && a.hoverSeg && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4) { const [[x1, y1], [x2, y2]] = a.hoverSeg; Object.assign(r, { x1, y1, x2, y2 }); }
     const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
     const it = tiny ? null : a.dimMode ? dimFromRecog(a) : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
     if (it) addStrokes(pe, p, [it]);
@@ -4031,7 +4127,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.dataset.color) setColor(b.dataset.color);
   else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; if (prefs.ruler) prefs.dim = false; savePrefs(); updToolbar(); }
-  else if (b.id === 'btnDim') { prefs.dim = !prefs.dim; if (prefs.dim) prefs.ruler = false; savePrefs(); updToolbar(); if (prefs.dim && !prefs.dimHint) { prefs.dimHint = true; savePrefs(); toast('Bemaßung: Linie ziehen – die Maßzahl wird im eingestellten Maßstab berechnet. Maßstab über den Knopf daneben.', 6000); } }
+  else if (b.id === 'btnDim') { prefs.dim = !prefs.dim; if (prefs.dim) prefs.ruler = false; savePrefs(); updToolbar(); if (prefs.dim && !prefs.dimHint) { prefs.dimHint = true; savePrefs(); toast('Bemaßung: von Punkt zu Punkt ziehen – oder mit dem Stift über eine Linie schweben und sie antippen. Maßstab über den Knopf daneben.', 7000); } }
   else if (b.id === 'btnScale') { syncScalePop(); showPop($('#scalePop'), b); }
   else if (b.id === 'btnAlpha') showPop($('#alphaPop'), b);
   else if (b.id === 'btnBehind') { prefs.markerBehind = prefs.markerBehind === false; savePrefs(); updToolbar(); }
@@ -4118,6 +4214,7 @@ $('#menuPop').addEventListener('click', async e => {
   else if (m === 'table') openGrid('table', currentPage());
   else if (m === 'paste') pasteClip();
   else if (m === 'insPdf') pickInsertPdf();
+  else if (m === 'noteArea') toggleNoteArea();
   else if (m === 'mark') toggleMark();
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
@@ -4232,10 +4329,31 @@ async function insertPdfPages(file, after = currentPage()) {
     old?.destroy();
   } catch (e) { return toast('Diese PDF konnte nicht eingefügt werden: ' + e.message, 6000); }
   const before = pagesSnap(), i = S.note.pages.indexOf(after);
-  insertPages(i + 1, sizes.map(([w, h], k) => ({ id: uid(), w, h, bg: 'pdf', pdf: offset + k, items: [] })));
+  const withNote = S.note.pages.some(p => p.noteW);
+  insertPages(i + 1, sizes.map(([w, h], k) => withNote ? { id: uid(), w: w + Math.round(w * 0.5), h, pw: w, noteW: Math.round(w * 0.5), noteBg: 'grid', bg: 'pdf', pdf: offset + k, items: [] } : { id: uid(), w, h, bg: 'pdf', pdf: offset + k, items: [] }));
   pushPagesHist(before);
   pageEls.forEach(pe => { pe.sc = null; }); scheduleRender();
   toast(`${sizes.length} PDF-Seite(n) aus „${file.name}“ eingefügt.`, 4000);
+}
+/* Notizfläche rechts neben allen PDF-Seiten an- oder ausschalten */
+function toggleNoteArea() {
+  commitText();
+  const pdfPages = S.note.pages.filter(p => p.pdf != null);
+  if (!pdfPages.length) return toast('Diese Notiz hat keine PDF-Seiten. Die Notizfläche gibt es für geöffnete oder eingefügte PDFs.', 5000);
+  const on = pdfPages.some(p => !p.noteW);
+  if (!on) {
+    const used = pdfPages.find(p => p.items.some(it => { const b = bbox(it); return b.x + b.w > p.pw + 2; }));
+    if (used) return toast('Auf einer Notizfläche steht noch etwas. Bitte zuerst dort löschen oder verschieben.', 5000);
+  }
+  const before = pagesSnap();
+  for (const p of pdfPages) {
+    if (on && !p.noteW) { p.pw = p.w; p.noteW = Math.round(p.w * 0.5); p.noteBg = 'grid'; p.w = p.pw + p.noteW; }
+    else if (!on && p.noteW) { p.w = p.pw; delete p.pw; delete p.noteW; delete p.noteBg; }
+  }
+  if (S.pdf) S.pdf._thumbBg = null;
+  pageEls.forEach(pe => { pe.sc = null; hideDetail(pe); });
+  pagesChanged(); pushPagesHist(before); scheduleRender();
+  toast(on ? 'Notizfläche rechts neben den PDF-Seiten eingefügt. Beim Speichern wird sie Teil der PDF.' : 'Notizfläche entfernt.', 4500);
 }
 let insertAfter = null;
 async function pickInsertPdf(after = currentPage()) {
@@ -4468,13 +4586,14 @@ async function pageThumb(p, W) {
   const ctx = c.getContext('2d');
   if (p.pdf != null && pdf) {
     // PDF-Hintergrund der Vorschau nur einmal rendern und dann wiederverwenden
-    const cache = pdf._thumbBg ||= new Map(), key = p.pdf + ':' + W;
+    const cache = pdf._thumbBg ||= new Map(), key = p.pdf + ':' + W + ':' + (p.noteW || 0);
     let bg = cache.get(key);
     if (!bg) {
       bg = document.createElement('canvas'); bg.width = c.width; bg.height = c.height;
       const bx = bg.getContext('2d'); bx.fillStyle = '#fff'; bx.fillRect(0, 0, bg.width, bg.height);
       const pg = await pdf.getPage(p.pdf + 1);
       await pg.render({ canvasContext: bx, viewport: pg.getViewport({ scale: r }) }).promise;
+      if (p.noteW) { bx.setTransform(r, 0, 0, r, 0, 0); drawNoteArea(bx, p); }
       cache.set(key, bg);
     }
     ctx.drawImage(bg, 0, 0);
@@ -4484,8 +4603,8 @@ async function pageThumb(p, W) {
 }
 const makeThumb = async () => (await pageThumb(S.note.pages[0], 300)).toDataURL('image/jpeg', 0.75);
 
-async function newNote(paper, orient) {
-  const [w, h] = orient === 'l' ? [A4[1], A4[0]] : A4;
+async function newNote(paper, orient, size = 'A4') {
+  const f = PAPER[size] || A4, [w, h] = orient === 'l' ? [f[1], f[0]] : f;
   const now = Date.now();
   const note = {
     id: uid(), title: 'Notiz vom ' + new Date().toLocaleDateString('de-DE', { day: 'numeric', month: 'long' }),
@@ -4784,11 +4903,17 @@ $('#backupPop').addEventListener('click', async e => {
   } catch (err) { if (err.name !== 'AbortError') toast('Öffnen fehlgeschlagen: ' + err.message, 6000); }
 });
 $('#fileBackup').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) restoreBackup(f); });
-$('#btnNewNote').addEventListener('click', () => $('#newDlg').showModal());
+$('#btnNewNote').addEventListener('click', () => {
+  const f = $('#newForm');
+  f.elements.size.value = prefs.newSize || 'A4';
+  f.querySelector(`[name="orient"][value="${prefs.newOrient === 'l' ? 'l' : 'p'}"]`).checked = true;
+  $('#newDlg').showModal();
+});
 $('#newDlg').addEventListener('close', () => {
   if ($('#newDlg').returnValue !== 'ok') return;
   const f = new FormData($('#newForm'));
-  newNote(f.get('paper'), f.get('orient'));
+  prefs.newSize = f.get('size') || 'A4'; prefs.newOrient = f.get('orient'); savePrefs();
+  newNote(f.get('paper'), f.get('orient'), prefs.newSize);
 });
 
 /* ---------------- Editor-Kopf ---------------- */
@@ -4824,7 +4949,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 71;
+const APP_VERSION = 72;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5006,6 +5131,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.6': ['Bemaßung: Stift über eine Linie oder Kante schweben lassen – sie leuchtet auf, Antippen bemaßt sie direkt; Ecken werden als Fangpunkt angezeigt', 'Neue Notizen in den Formaten A0 bis A5 (hoch oder quer)', 'PDF mit Notizfläche: Menü ⋮ → „Notizfläche neben PDF-Seiten“ setzt rechts neben jede PDF-Seite eine karierte Fläche für Notizen'],
   '5.5': ['Speichern in die Nextcloud zuverlässiger: Dateien aus „Öffnen mit“ werden erkannt und einmal über die Nextcloud-Dateiauswahl verknüpft, damit Änderungen wirklich hochgeladen werden', 'Beim Überschreiben bleibt kein Rest einer älteren, längeren Datei mehr hängen', 'Nach dem Speichern Hinweis, dass die Nextcloud-App den Upload übernimmt'],
   '5.4': ['Bilder zuschneiden: Bild markieren → „Zuschneiden“, Rahmen an Ecken und Seiten ziehen'],
   '5.3': ['Dämmung jetzt in zwei Varianten: „Dämmung weich“ (Bögen mit sich kreuzenden Schrägen) und „Dämmung hart“ (Zickzack)', 'Stahlbeton: Schraffur unter 45°, abwechselnd durchgezogen und gestrichelt'],

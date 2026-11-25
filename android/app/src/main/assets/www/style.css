@@ -602,3 +602,7 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 .crop-box b[data-d="w"] { left: -5px; } .crop-box b[data-d="e"] { right: -5px; }
 .crop-actions { align-items: center; }
 .crop-info { margin-right: auto; color: var(--muted, #69736f); font-size: .85rem; }
+
+/* Papiergröße im Dialog „Neue Notiz“ */
+.size-pick { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
+.size-pick select { padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
