@@ -764,6 +764,46 @@ function snapLine(x1, y1, x2, y2) {
   const r = Math.round(a / s) * s;
   return Math.abs(a - r) < 0.09 ? [x1 + L * Math.cos(r), y1 + L * Math.sin(r)] : [x2, y2];
 }
+/* Kreisbogen: Kreis durch die Punkte legen (kleinste Quadrate), Bogen nur, wenn die Punkte gleichmäßig
+   in eine Richtung um den Mittelpunkt laufen und nah am Kreis liegen */
+function fitArc(P, size) {
+  const n = P.length; if (n < 5) return null;
+  let mx = 0, my = 0; for (const [x, y] of P) { mx += x; my += y; } mx /= n; my /= n;
+  let suu = 0, svv = 0, suv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+  for (const [x, y] of P) {
+    const u = x - mx, v = y - my;
+    suu += u * u; svv += v * v; suv += u * v; suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+  }
+  const det = suu * svv - suv * suv; if (Math.abs(det) < 1e-9) return null;
+  const b1 = (suuu + suvv) / 2, b2 = (svvv + svuu) / 2;
+  const uc = (b1 * svv - b2 * suv) / det, vc = (b2 * suu - b1 * suv) / det;
+  const cx = mx + uc, cy = my + vc, r = Math.sqrt(uc * uc + vc * vc + (suu + svv) / n);
+  if (!(r > 5) || r > size * 8) return null;                        // fast gerade: das ist eine Linie
+  let err = 0; for (const [x, y] of P) err += Math.abs(Math.hypot(x - cx, y - cy) - r);
+  if (err / n / Math.max(size, 1) > 0.035) return null;
+  // Winkel aufsummieren: muss stetig in eine Richtung laufen
+  let a = Math.atan2(P[0][1] - cy, P[0][0] - cx), sweep = 0, back = 0;
+  for (let i = 1; i < n; i++) {
+    const b = Math.atan2(P[i][1] - cy, P[i][0] - cx); let d = b - a;
+    if (d > Math.PI) d -= 2 * Math.PI; else if (d < -Math.PI) d += 2 * Math.PI;
+    sweep += d; a = b; back += d;
+  }
+  let neg = 0, tot = 0; a = Math.atan2(P[0][1] - cy, P[0][0] - cx);
+  for (let i = 1; i < n; i++) {
+    const b = Math.atan2(P[i][1] - cy, P[i][0] - cx); let d = b - a;
+    if (d > Math.PI) d -= 2 * Math.PI; else if (d < -Math.PI) d += 2 * Math.PI;
+    tot += Math.abs(d); if (Math.sign(d) !== Math.sign(sweep)) neg += Math.abs(d); a = b;
+  }
+  if (Math.abs(sweep) < 0.35 || Math.abs(sweep) > Math.PI * 1.9 || neg > tot * 0.12) return null;
+  const a0 = Math.atan2(P[0][1] - cy, P[0][0] - cx);
+  return { kind: 'arc', cx, cy, r, a0, a1: a0 + sweep };
+}
+// Bogen als glatter Linienzug (wie andere umgewandelte Formen: Radierer, Lasso, PDF funktionieren wie gewohnt)
+function arcStroke(arc, color, size) {
+  const n = clamp(Math.ceil(arc.r * Math.abs(arc.a1 - arc.a0) / 3), 12, 160), pts = [];
+  for (let i = 0; i <= n; i++) { const t = arc.a0 + (arc.a1 - arc.a0) * i / n; pts.push([+(arc.cx + arc.r * Math.cos(t)).toFixed(2), +(arc.cy + arc.r * Math.sin(t)).toFixed(2), 0.5]); }
+  return { t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts };
+}
 function recognizeShape(pts) {
   const P = pts.map(p => [p[0], p[1]]), n = P.length;
   if (n < 4) return null;
@@ -773,10 +813,13 @@ function recognizeShape(pts) {
   if (size < 10) return null;
   const chord = Math.hypot(P[n - 1][0] - P[0][0], P[n - 1][1] - P[0][1]);
   if (chord / len > 0.9) {
+    // flacher Bogen? (Wölbung deutlich größer als normales Zittern)
+    let bulge = 0; for (const [x, y] of P) bulge = Math.max(bulge, segDist(x, y, P[0][0], P[0][1], P[n - 1][0], P[n - 1][1]));
+    if (bulge > Math.max(6, chord * 0.06)) { const arc = fitArc(P, size); if (arc) return arc; }
     const [x2, y2] = snapLine(P[0][0], P[0][1], P[n - 1][0], P[n - 1][1]);
     return { kind: 'line', x1: P[0][0], y1: P[0][1], x2, y2 };
   }
-  if (chord > Math.max(0.3 * size, 14)) return null;              // offene Kurve: nichts erkennen
+  if (chord > Math.max(0.3 * size, 14)) return fitArc(P, size);   // offene Kurve: höchstens ein Kreisbogen
   // Ecken suchen: vereinfachen, dann fast gerade Knicke und zu nahe Punkte entfernen
   let C = rdp([...P, P[0]], size * 0.07).slice(0, -1);
   for (let changed = true; changed && C.length > 2;) {
@@ -1990,7 +2033,8 @@ function onHold(a) {
   } else {
     const s = recognizeShape(pts);
     if (!s) return;
-    a.recog = { t: 'shape', id: uid(), ...s, color: a.item.color, size: +(a.item.size * 0.85).toFixed(2) };
+    a.recog = s.kind === 'arc' ? arcStroke(s, a.item.color, +(a.item.size * 0.85).toFixed(2))
+      : { t: 'shape', id: uid(), ...s, color: a.item.color, size: +(a.item.size * 0.85).toFixed(2) };
   }
   navigator.vibrate?.(12);
   drawRecog(a);
@@ -2000,6 +2044,7 @@ function drawRecog(a) {
   ctx.clearRect(0, 0, a.p.w, a.p.h);
   if (r.kind === 'markerLine' && a.dimMode) { drawDim(ctx, dimFromRecog(a)); drawFang(ctx, a, [a.fA && [r.x1, r.y1], a.fB && [r.x2, r.y2]].filter(Boolean)); }
   else if (r.kind === 'markerLine') drawStroke(ctx, { ...a.item, pts: [[r.x1, r.y1, .5], [r.x2, r.y2, .5]] });
+  else if (r.t === 'stroke') drawStroke(ctx, r);
   else drawShape(ctx, r);
   if (r.kind === 'markerLine' || r.kind === 'line') drawLineInfo(ctx, r.x1, r.y1, r.x2, r.y2, a.k);
 }
@@ -5006,7 +5051,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 73;
+const APP_VERSION = 74;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5188,6 +5233,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.8': ['Bögen werden erkannt: Bogen zeichnen und den Stift am Ende kurz ruhig halten – daraus wird ein sauberer Kreisbogen (wie bei Linie, Kreis und Rechteck)'],
   '5.7': ['Endlos-Papier (Neue Notiz → Größe „Endlos“): wächst beim Schreiben am Rand in jede Richtung; im PDF wird der beschriebene Bereich gespeichert, höchstens A0', 'Beim ersten Öffnen einer PDF gibt es einen Hinweis auf die Notizfläche (Menü ⋮)'],
   '5.6': ['Bemaßung: Stift über eine Linie oder Kante schweben lassen – sie leuchtet auf, Antippen bemaßt sie direkt; Ecken werden als Fangpunkt angezeigt', 'Neue Notizen in den Formaten A0 bis A5 (hoch oder quer)', 'PDF mit Notizfläche: Menü ⋮ → „Notizfläche neben PDF-Seiten“ setzt rechts neben jede PDF-Seite eine karierte Fläche für Notizen'],
   '5.5': ['Speichern in die Nextcloud zuverlässiger: Dateien aus „Öffnen mit“ werden erkannt und einmal über die Nextcloud-Dateiauswahl verknüpft, damit Änderungen wirklich hochgeladen werden', 'Beim Überschreiben bleibt kein Rest einer älteren, längeren Datei mehr hängen', 'Nach dem Speichern Hinweis, dass die Nextcloud-App den Upload übernimmt'],
