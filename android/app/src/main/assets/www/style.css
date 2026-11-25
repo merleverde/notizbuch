@@ -584,3 +584,21 @@ dialog.grid-dlg { width: min(860px, calc(100vw - 32px)); }
 .popover .scale-grid button.active, .popover .scale-row button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 .scale-own { display: flex; align-items: center; gap: 6px; font-size: .9rem; }
 .scale-own input { width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); font: inherit; }
+
+/* Bild zuschneiden */
+dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
+.crop-stage { position: relative; margin: 18px auto 24px; touch-action: none; user-select: none; -webkit-user-select: none; background: #fff; cursor: crosshair; }
+.crop-clip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.crop-shade { position: absolute; box-shadow: 0 0 0 9999px rgba(15,20,18,.5); }
+.crop-stage img { display: block; width: 100%; height: 100%; pointer-events: none; }
+.crop-box { position: absolute; box-sizing: border-box; border: 2px solid #fff; outline: 1px solid rgba(0,0,0,.55); cursor: move; }
+.crop-box i { position: absolute; width: 26px; height: 26px; margin: -13px; box-sizing: border-box; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
+.crop-box i[data-d="nw"] { left: 0; top: 0; cursor: nwse-resize; } .crop-box i[data-d="ne"] { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-box i[data-d="sw"] { left: 0; top: 100%; cursor: nesw-resize; } .crop-box i[data-d="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+.crop-box b { position: absolute; background: #fff; border: 1px solid var(--accent); border-radius: 4px; }
+.crop-box b[data-d="n"], .crop-box b[data-d="s"] { left: 50%; width: 34px; height: 8px; margin-left: -17px; cursor: ns-resize; }
+.crop-box b[data-d="n"] { top: -5px; } .crop-box b[data-d="s"] { bottom: -5px; }
+.crop-box b[data-d="w"], .crop-box b[data-d="e"] { top: 50%; height: 34px; width: 8px; margin-top: -17px; cursor: ew-resize; }
+.crop-box b[data-d="w"] { left: -5px; } .crop-box b[data-d="e"] { right: -5px; }
+.crop-actions { align-items: center; }
+.crop-info { margin-right: auto; color: var(--muted, #69736f); font-size: .85rem; }

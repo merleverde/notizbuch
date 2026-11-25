@@ -2685,7 +2685,7 @@ function renderSel() {
       + (line.kind === 'dim' ? (d => `<div class="lend mid" data-i="3" title="Maßlinie parallel verschieben" style="left:${(((d.a[0] + d.b[0]) / 2 - b.x) * sc + pad).toFixed(1)}px;top:${(((d.a[1] + d.b[1]) / 2 - b.y) * sc + pad).toFixed(1)}px"></div>`)(dimPts(line)) : '')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : items.length === 1 && items[0].t === 'img' ? '<button data-a="crop">Zuschneiden</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar') || act) return;
@@ -2708,6 +2708,7 @@ function renderSel() {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
     if (a === 'formula') { if (items[0].matrix) openGrid('matrix', p, items[0]); else openFormula(p, items[0]); }
     else if (a === 'edittext') editTextItem(p, items[0]);
+    else if (a === 'crop') openCrop(p, items[0]);
     else if (a === 'edittable') openGrid('table', p, items[0]);
     else if (a === 'dimtext') {
       const it = items[0], v = prompt('Maßzahl (leer lassen = automatisch gemessen):', it.text ?? dimLabel(it));
@@ -3126,6 +3127,90 @@ function texToSvg(tex, color) {
   return { src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str), ew, eh };
 }
 const isFormula = it => it.t === 'img' && typeof it.tex === 'string';
+
+/* ---------------- Bild zuschneiden ----------------
+   Rahmen im Dialog ziehen (Ecken/Seiten = Größe, innen = verschieben, außerhalb = neu aufziehen).
+   Das Bild wird wirklich beschnitten (kleinere Datei, PDF unverändert); Rückgängig stellt es wieder her. */
+let cropCtx = null;
+function layoutCrop() {
+  const { r } = cropCtx, b = $('#cropBox');
+  const css = { left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%' };
+  Object.assign(b.style, css); Object.assign($('#cropShade').style, css);
+  const nw = cropCtx.im.naturalWidth, nh = cropCtx.im.naturalHeight;
+  $('#cropInfo').textContent = `${Math.round(r.w * nw)} × ${Math.round(r.h * nh)} Pixel`;
+}
+function openCrop(p, it) {
+  const im = getImg(it.src); if (!im) { toast('Bild wird noch geladen – bitte gleich noch einmal.'); return; }
+  cropCtx = { p, it, im, r: { x: 0, y: 0, w: 1, h: 1 } };
+  const nw = im.naturalWidth, nh = im.naturalHeight;
+  const k = Math.min((Math.min(900, innerWidth - 32) - 80) / nw, (innerHeight * 0.58) / nh);
+  const st = $('#cropStage');
+  st.style.width = Math.round(nw * k) + 'px'; st.style.height = Math.round(nh * k) + 'px';
+  $('#cropImg').src = it.src;
+  $('#cropRotHint').hidden = !it.rot;
+  layoutCrop(); $('#cropDlg').showModal();
+}
+(() => {
+  const st = $('#cropStage'), MIN = 0.03;
+  let drag = null;
+  st.addEventListener('pointerdown', e => {
+    if (!cropCtx) return;
+    e.preventDefault();
+    const R = st.getBoundingClientRect(), px = (e.clientX - R.left) / R.width, py = (e.clientY - R.top) / R.height;
+    let d = e.target.dataset.d || (e.target.id === 'cropBox' ? 'move' : null);
+    if (!d) { cropCtx.r = { x: clamp(px, 0, 1), y: clamp(py, 0, 1), w: 0, h: 0 }; d = 'se'; }   // außerhalb: neu aufziehen
+    drag = { d, R, px, py, r0: { ...cropCtx.r } };
+    try { st.setPointerCapture(e.pointerId); } catch {}
+  });
+  st.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const { d, R, r0 } = drag, dx = (e.clientX - R.left) / R.width - drag.px, dy = (e.clientY - R.top) / R.height - drag.py;
+    let x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
+    if (d === 'move') { const mx = clamp(dx, -x0, 1 - x1), my = clamp(dy, -y0, 1 - y1); x0 += mx; x1 += mx; y0 += my; y1 += my; }
+    else {
+      if (d.includes('w')) x0 = clamp(x0 + dx, 0, x1 - MIN);
+      if (d.includes('e')) x1 = clamp(x1 + dx, x0 + MIN, 1);
+      if (d.includes('n')) y0 = clamp(y0 + dy, 0, y1 - MIN);
+      if (d.includes('s')) y1 = clamp(y1 + dy, y0 + MIN, 1);
+    }
+    cropCtx.r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; layoutCrop();
+  });
+  const end = () => {
+    // zu kleiner neu aufgezogener Rahmen (nur angetippt): wieder ganzes Bild
+    if (drag && cropCtx && (cropCtx.r.w < 0.03 || cropCtx.r.h < 0.03)) { cropCtx.r = drag.r0.w >= 0.03 && drag.r0.h >= 0.03 ? drag.r0 : { x: 0, y: 0, w: 1, h: 1 }; layoutCrop(); }
+    drag = null;
+  };
+  st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
+  $('#cropDlg').addEventListener('click', e => {
+    const a = e.target.closest('[data-c]')?.dataset.c; if (!a) return;
+    if (a === 'reset') { cropCtx.r = { x: 0, y: 0, w: 1, h: 1 }; layoutCrop(); return; }
+    if (a === 'ok') applyCrop();
+    $('#cropDlg').close();
+  });
+  $('#cropDlg').addEventListener('close', () => { cropCtx = null; drag = null; });
+})();
+function applyCrop() {
+  const { p, it, im, r } = cropCtx;
+  if (r.x < 0.001 && r.y < 0.001 && r.w > 0.999 && r.h > 0.999) return;      // nichts beschnitten
+  const nw = im.naturalWidth, nh = im.naturalHeight;
+  const sx = Math.round(r.x * nw), sy = Math.round(r.y * nh), sw = Math.max(1, Math.round(r.w * nw)), sh = Math.max(1, Math.round(r.h * nh));
+  const c = document.createElement('canvas'); c.width = sw; c.height = sh;
+  const png = !it.src.startsWith('data:image/jpeg');
+  const g = c.getContext('2d');
+  if (!png) { g.fillStyle = '#fff'; g.fillRect(0, 0, sw, sh); }
+  g.drawImage(im, sx, sy, sw, sh, 0, 0, sw, sh);
+  const src = png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.92);
+  // neue Lage: Mittelpunkt des Ausschnitts (bei gedrehten Bildern mitgedreht), Größe anteilig
+  const fx = (sx + sw / 2) / nw - 0.5, fy = (sy + sh / 2) / nh - 0.5, cs = Math.cos(it.rot || 0), sn = Math.sin(it.rot || 0);
+  const ox = fx * it.w, oy = fy * it.h, cx = it.x + it.w / 2 + ox * cs - oy * sn, cy = it.y + it.h / 2 + ox * sn + oy * cs;
+  const w = it.w * sw / nw, h = it.h * sh / nh;
+  const before = snap(p), { tex, color, mh, matrix, ...base } = it;
+  const nit = { ...base, src, x: cx - w / 2, y: cy - h / 2, w, h };
+  p.items = p.items.map(x => x.id === it.id ? nit : x);
+  refreshPage(p); commit(p, before);
+  if (S.sel && S.sel.p === p) renderSel();
+  toast('Bild zugeschnitten – mit Rückgängig wieder herstellbar.');
+}
 
 const MATH_KEYS = [
   ['a⁄b', '\\frac{|}{}', 'Bruch'], ['√', '\\sqrt{|}', 'Wurzel'], ['ⁿ√', '\\sqrt[|]{}', 'n-te Wurzel'],
@@ -4731,7 +4816,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 69;
+const APP_VERSION = 70;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4913,6 +4998,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.4': ['Bilder zuschneiden: Bild markieren → „Zuschneiden“, Rahmen an Ecken und Seiten ziehen'],
   '5.3': ['Dämmung jetzt in zwei Varianten: „Dämmung weich“ (Bögen mit sich kreuzenden Schrägen) und „Dämmung hart“ (Zickzack)', 'Stahlbeton: Schraffur unter 45°, abwechselnd durchgezogen und gestrichelt'],
   '5.2': ['Neue Schraffuren für Formen (Bauwesen): Holz mit Faser, Hirnholz, Stahl, Stahlbeton (45°, abwechselnd durchgezogen und gestrichelt), Erdreich, Dämmung weich und Dämmung hart – Knopf neben „Füllung“; bereits gezeichnete Formen über das Stil-Menü schraffieren', 'Schraffuren bleiben im PDF scharfe Linien'],
   '5.1': ['„Einfügen“ erscheint auch mit dem Lasso nicht mehr beim einfachen Antippen – überall nur nach 2 Sekunden ruhigem Halten'],

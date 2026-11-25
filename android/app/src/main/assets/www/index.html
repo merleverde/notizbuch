@@ -398,6 +398,21 @@
   </div>
 </dialog>
 
+<dialog id="cropDlg" class="crop-dlg">
+  <h2>Bild zuschneiden</h2>
+  <p class="dlg-note">Rahmen an den Ecken und Seiten ziehen, innen verschieben – oder außerhalb neu aufziehen.</p>
+  <p id="cropRotHint" class="dlg-note" hidden>Das Bild wird hier ungedreht gezeigt; der Ausschnitt dreht sich auf der Seite mit.</p>
+  <div id="cropStage" class="crop-stage">
+    <div class="crop-clip"><img id="cropImg" alt=""><div id="cropShade" class="crop-shade"></div></div>
+    <div id="cropBox" class="crop-box"><i data-d="nw"></i><i data-d="ne"></i><i data-d="sw"></i><i data-d="se"></i><b data-d="n"></b><b data-d="s"></b><b data-d="w"></b><b data-d="e"></b></div>
+  </div>
+  <div class="dlg-actions crop-actions">
+    <span id="cropInfo" class="crop-info"></span>
+    <button data-c="reset" class="btn">Zurücksetzen</button>
+    <button data-c="cancel" class="btn">Abbrechen</button>
+    <button data-c="ok" class="btn primary">Zuschneiden</button>
+  </div>
+</dialog>
 <dialog id="gridDlg" class="grid-dlg">
   <h2 id="gridTitle">Tabelle einfügen</h2>
   <div class="grid-opts">
