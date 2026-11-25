@@ -4731,7 +4731,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 68;
+const APP_VERSION = 69;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4913,6 +4913,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.3': ['Dämmung jetzt in zwei Varianten: „Dämmung weich“ (Bögen mit sich kreuzenden Schrägen) und „Dämmung hart“ (Zickzack)', 'Stahlbeton: Schraffur unter 45°, abwechselnd durchgezogen und gestrichelt'],
   '5.2': ['Neue Schraffuren für Formen (Bauwesen): Holz mit Faser, Hirnholz, Stahl, Stahlbeton (45°, abwechselnd durchgezogen und gestrichelt), Erdreich, Dämmung weich und Dämmung hart – Knopf neben „Füllung“; bereits gezeichnete Formen über das Stil-Menü schraffieren', 'Schraffuren bleiben im PDF scharfe Linien'],
   '5.1': ['„Einfügen“ erscheint auch mit dem Lasso nicht mehr beim einfachen Antippen – überall nur nach 2 Sekunden ruhigem Halten'],
   '5.0': ['„Einfügen“ erscheint erst nach 3 Sekunden Halten – mit dem Finger und mit dem Stift (nicht mehr aus Versehen)'],
