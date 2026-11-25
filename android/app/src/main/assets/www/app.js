@@ -820,7 +820,8 @@ function recognizeShape(pts) {
 const wrap = $('#pagesWrap'), pagesHost = $('#pages');
 const dpr = () => window.devicePixelRatio || 1;
 function baseScale() {
-  const maxW = Math.max(...S.note.pages.map(p => p.w));
+  // Endlos-Papier zählt nur mit A4-quer-Breite: sonst würde alles winzig, sobald es breit wird
+  const maxW = Math.max(...S.note.pages.map(p => p.endless ? Math.min(p.w, A4[1]) : p.w));
   return clamp((wrap.clientWidth - 32) / maxW, 0.2, 1.6);
 }
 const scale = () => baseScale() * S.zoom;
@@ -1099,7 +1100,7 @@ function zoomAnchor(cx, cy) {
 }
 function setZoom(z, cx, cy, anchor = null) {
   const a = anchor || zoomAnchor(cx, cy);
-  S.zoom = clamp(z, 0.5, 5);
+  S.zoom = clamp(z, S.note.pages.some(p => p.endless) ? 0.1 : 0.5, 5);   // Endlos-Papier: weit herauszoomen für den Überblick
   layout();
   const r = pageEls.get(a.p.id).el.getBoundingClientRect(), k = r.width / a.p.w;
   wrap.scrollLeft += r.left + a.x * k - cx;
@@ -1118,6 +1119,40 @@ function commit(p, before) {
   if (S.undo.length > 60) S.undo.shift();
   S.redo.length = 0;
   updUndo(); markDirty(); queueThumb(p.id);
+  growPage(p);
+}
+/* ---- Endlos-Papier: wächst, sobald Inhalt nahe an einen Rand kommt (in jede Richtung) ----
+   Wächst es nach links/oben, rückt der ganze Inhalt (auch im Verlauf) nach rechts/unten; die Ansicht bleibt stehen. */
+const GROW_M = 150, GROW_BY = 400, GROW_MAX = 20000;
+function contentBox(p) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const it of p.items) { const b = bbox(it); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+  return x0 === Infinity ? null : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+function shiftPage(p, dx, dy) {
+  const done = new Map();
+  const mv = it => { let n = done.get(it); if (!n) { n = xform(it, (x, y) => [x + dx, y + dy], 1); done.set(it, n); } return n; };
+  p.items = p.items.map(mv);
+  for (const h of [...S.undo, ...S.redo]) {
+    for (const e of h.multi || [h]) if (e.pid === p.id && Array.isArray(e.before)) { e.before = e.before.map(mv); e.after = e.after.map(mv); }
+  }
+}
+function growPage(p) {
+  if (!p.endless) return false;
+  const b = contentBox(p); if (!b) return false;
+  const need = v => v > 0 ? Math.ceil(v / GROW_BY) * GROW_BY : 0;
+  let dl = need(GROW_M - b.x), dt = need(GROW_M - b.y), dr = need(b.x + b.w - (p.w - GROW_M)), db = need(b.y + b.h - (p.h - GROW_M));
+  dr = Math.min(dr, Math.max(0, GROW_MAX - p.w - dl)); dl = Math.min(dl, Math.max(0, GROW_MAX - p.w));
+  db = Math.min(db, Math.max(0, GROW_MAX - p.h - dt)); dt = Math.min(dt, Math.max(0, GROW_MAX - p.h));
+  if (!(dl || dt || dr || db)) return false;
+  if (dl || dt) shiftPage(p, dl, dt);
+  p.w += dl + dr; p.h += dt + db;
+  const pe = pageEls.get(p.id), sc = scale();
+  if (pe) { hideDetail(pe); pe.sc = null; }
+  layout();
+  wrap.scrollLeft += dl * sc; wrap.scrollTop += dt * sc;
+  refreshPage(p); scheduleRender(); markDirty();
+  return true;
 }
 /* Ein Verlaufsschritt über mehrere Seiten (z. B. Auswahl auf eine andere Seite gezogen) */
 function commitMulti(befores) {
@@ -1132,6 +1167,7 @@ function commitMulti(befores) {
   if (S.undo.length > 60) S.undo.shift();
   S.redo.length = 0;
   updUndo(); markDirty(); multi.forEach(m => queueThumb(m.pid));
+  multi.forEach(m => { const p = pageById(m.pid); if (p) growPage(p); });
 }
 function applyHist(from, to, key) {
   commitText();
@@ -1433,6 +1469,18 @@ function widenPdfPage(pg, ext) {
   const mb = pg.getMediaBox(), cb = pg.getCropBox();
   pg.setMediaBox(...grow(mb)); pg.setCropBox(...grow(cb));
 }
+// Endlos-Papier: PDF-Seite auf den beschriebenen Bereich (+ Rand) zuschneiden, höchstens A0 (hoch oder quer)
+function endlessCrop(p) {
+  const b = contentBox(p), M = 28;
+  if (!b) return { x: 0, y: 0, w: Math.min(p.w, A4[1]), h: Math.min(p.h, A4[0]) };
+  let x = Math.max(0, b.x - M), y = Math.max(0, b.y - M), w = Math.min(p.w, b.x + b.w + M) - x, h = Math.min(p.h, b.y + b.h + M) - y;
+  const [a, c] = PAPER.A0, [mw, mh] = w >= h ? [c, a] : [a, c];
+  return { x, y, w: Math.min(w, mw), h: Math.min(h, mh), cut: w > mw || h > mh };
+}
+function cropEndless(pg, p) {
+  const r = endlessCrop(p), H = pg.getHeight();
+  pg.setMediaBox(r.x, H - r.y - r.h, r.w, r.h); pg.setCropBox(r.x, H - r.y - r.h, r.w, r.h);
+}
 async function buildPdf() {
   const { PDFDocument } = PDFLib;
   const out = await PDFDocument.create();
@@ -1443,6 +1491,7 @@ async function buildPdf() {
     else pg = out.addPage([p.w, p.h]);
     if (p.pdf != null && src && !p.items.length && !p.noteW) continue;
     await exportOverlay(out, pg, p, p.pdf == null || !src);
+    if (p.endless) cropEndless(pg, p);
   }
   out.setTitle(S.note.title || 'Notiz');
   if (prefs.editable) {
@@ -1601,6 +1650,8 @@ async function doSave(pickNew, suggest) {
     S.note.fileName = h.name;
     S.note.title = h.name; $('#noteTitle').value = h.name;   // Titelzeile zeigt den Dateinamen
     setFileClean();
+    const cut = S.note.pages.some(p => p.endless && endlessCrop(p).cut);
+    if (cut) setTimeout(() => toast('Hinweis: Das Endlos-Papier ist größer als A0 – im PDF wurde es auf A0 abgeschnitten (oben links beginnend).', 7000), 3500);
     toast(isCloud(h) ? `In „${h.name}“ gespeichert. Die Nextcloud-App lädt die Datei jetzt hoch – bei schlechter Verbindung kann das dauern (Stand in der Nextcloud-App unter „Uploads“).` : `In „${h.name}“ gespeichert.`, isCloud(h) ? 6500 : undefined);
     return true;
   } catch (e) {
@@ -4260,7 +4311,8 @@ function addPage(after = currentPage()) {
   commitText();
   const before = pagesSnap(), i = S.note.pages.indexOf(after);
   const tpl = after.pdf == null ? after : [...S.note.pages].reverse().find(p => p.pdf == null);
-  insertPages(i + 1, [{ id: uid(), w: after.w, h: after.h, bg: tpl ? tpl.bg : 'blank', paper: tpl?.paper, pdf: null, items: [] }]);
+  insertPages(i + 1, [after.endless ? { id: uid(), w: A4[1], h: A4[0], bg: after.bg, paper: after.paper, pdf: null, items: [], endless: true }
+    : { id: uid(), w: after.w, h: after.h, bg: tpl ? tpl.bg : 'blank', paper: tpl?.paper, pdf: null, items: [] }]);
   pushPagesHist(before);
   toast(`Seite ${i + 2} eingefügt.`);
 }
@@ -4343,7 +4395,7 @@ function toggleNoteArea() {
   const on = pdfPages.some(p => !p.noteW);
   if (!on) {
     const used = pdfPages.find(p => p.items.some(it => { const b = bbox(it); return b.x + b.w > p.pw + 2; }));
-    if (used) return toast('Auf einer Notizfläche steht noch etwas. Bitte zuerst dort löschen oder verschieben.', 5000);
+    if (used) return toast('Auf der Notizfläche steht noch etwas. Bitte zuerst dort löschen oder verschieben.', 5000);
   }
   const before = pagesSnap();
   for (const p of pdfPages) {
@@ -4604,13 +4656,14 @@ async function pageThumb(p, W) {
 const makeThumb = async () => (await pageThumb(S.note.pages[0], 300)).toDataURL('image/jpeg', 0.75);
 
 async function newNote(paper, orient, size = 'A4') {
-  const f = PAPER[size] || A4, [w, h] = orient === 'l' ? [f[1], f[0]] : f;
+  const f = PAPER[size] || A4, endless = size === 'E', [w, h] = endless ? [A4[1], A4[0]] : orient === 'l' ? [f[1], f[0]] : f;
   const now = Date.now();
   const note = {
     id: uid(), title: 'Notiz vom ' + new Date().toLocaleDateString('de-DE', { day: 'numeric', month: 'long' }),
-    folder: S.folder, created: now, updated: now, pages: [{ id: uid(), w, h, bg: paper, pdf: null, items: [] }]
+    folder: S.folder, created: now, updated: now, pages: [{ id: uid(), w, h, bg: paper, pdf: null, items: [], ...(endless ? { endless: true } : {}) }]
   };
   await dbPut('notes', note);
+  if (endless && !prefs.endlessHint) { prefs.endlessHint = true; savePrefs(); setTimeout(() => toast('Endlos-Papier: Es wächst automatisch, sobald du nahe am Rand schreibst – in jede Richtung. Gespeichert wird der beschriebene Bereich (höchstens A0).', 7500), 600); }
   openNote(note);
 }
 
@@ -4669,6 +4722,10 @@ async function importPdf(file, handle) {
   if (handle && !/\.pdf$/i.test(handle.name) && (await askPdfExt(handle.name, 'open')) === 'add') {
     await saveToFile(true, handle.name.replace(/\.+$/, '') + '.pdf');
     return;
+  }
+  if (!restored && !prefs.noteAreaHint) {
+    prefs.noteAreaHint = true; savePrefs();
+    setTimeout(() => toast('Tipp: Menü ⋮ → „Notizfläche neben PDF an/aus“ setzt rechts neben jede Seite eine karierte Fläche für Notizen.', 7000), 5500);
   }
   if (restored) toast('Deine Schrift ist wieder bearbeitbar.');
   else if (foreign) toast('Diese PDF wurde in einer anderen App verändert. Du siehst den aktuellen Stand. Ältere Schrift lässt sich nur noch mit „Abdecken“ entfernen.', 8000);
@@ -4949,7 +5006,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 72;
+const APP_VERSION = 73;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5131,6 +5188,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.7': ['Endlos-Papier (Neue Notiz → Größe „Endlos“): wächst beim Schreiben am Rand in jede Richtung; im PDF wird der beschriebene Bereich gespeichert, höchstens A0', 'Beim ersten Öffnen einer PDF gibt es einen Hinweis auf die Notizfläche (Menü ⋮)'],
   '5.6': ['Bemaßung: Stift über eine Linie oder Kante schweben lassen – sie leuchtet auf, Antippen bemaßt sie direkt; Ecken werden als Fangpunkt angezeigt', 'Neue Notizen in den Formaten A0 bis A5 (hoch oder quer)', 'PDF mit Notizfläche: Menü ⋮ → „Notizfläche neben PDF-Seiten“ setzt rechts neben jede PDF-Seite eine karierte Fläche für Notizen'],
   '5.5': ['Speichern in die Nextcloud zuverlässiger: Dateien aus „Öffnen mit“ werden erkannt und einmal über die Nextcloud-Dateiauswahl verknüpft, damit Änderungen wirklich hochgeladen werden', 'Beim Überschreiben bleibt kein Rest einer älteren, längeren Datei mehr hängen', 'Nach dem Speichern Hinweis, dass die Nextcloud-App den Upload übernimmt'],
   '5.4': ['Bilder zuschneiden: Bild markieren → „Zuschneiden“, Rahmen an Ecken und Seiten ziehen'],
