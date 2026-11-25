@@ -495,18 +495,29 @@ public class MainActivity extends ComponentActivity {
                 Uri u = Uri.parse(uri);
                 try {
                     byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
-                    OutputStream out;
-                    try {
-                        out = getContentResolver().openOutputStream(u, "wt");     // vorhandene Datei ersetzen
-                    } catch (Exception e) {
-                        out = getContentResolver().openOutputStream(u, "w");
+                    // vorhandene Datei ersetzen ("wt" = schreiben + kürzen); manche Speicherorte kennen nur "rwt" oder "w"
+                    OutputStream out = null;
+                    boolean truncated = true;
+                    for (String mode : new String[]{"wt", "rwt"}) {
+                        try { out = getContentResolver().openOutputStream(u, mode); } catch (Exception ignored) { }
+                        if (out != null) break;
                     }
+                    if (out == null) { out = getContentResolver().openOutputStream(u, "w"); truncated = false; }
                     if (out == null) throw new java.io.IOException("Datei lässt sich nicht schreiben");
                     try (OutputStream o = out) {
                         o.write(bytes);
                         o.flush();
+                        if (o instanceof java.io.FileOutputStream) {
+                            java.io.FileOutputStream fo = (java.io.FileOutputStream) o;
+                            // ohne Kürzen bliebe bei einer vorher längeren Datei deren Rest am Ende hängen
+                            if (!truncated) try { fo.getChannel().truncate(bytes.length); truncated = true; } catch (Exception ignored) { }
+                            try { fo.getFD().sync(); } catch (Exception ignored) { }
+                        }
                     }
-                    done(id, new JSONObject().put("size", sizeOf(u)).put("written", bytes.length));
+                    long size = sizeOf(u);
+                    if (!truncated && size > bytes.length)
+                        throw new java.io.IOException("Die alte, längere Datei ließ sich nicht kürzen (" + size + " statt " + bytes.length + " Bytes). Bitte „Speichern unter …“ benutzen.");
+                    done(id, new JSONObject().put("size", size).put("written", bytes.length));
                 } catch (Exception e) {
                     fail(id, "NoModificationAllowedError", e.getMessage());
                 }

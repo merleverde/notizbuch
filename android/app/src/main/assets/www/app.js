@@ -1497,9 +1497,15 @@ function dialogChoice(dlg, key) {
 }
 /* Originaldatei nicht mehr beschreibbar: dieselbe Datei über die Dateiauswahl neu wählen lassen.
    Über die Dateiauswahl bekommt die App eine dauerhafte Erlaubnis und überschreibt dann direkt das Original. */
+/* Nextcloud/ownCloud: Dateien aus „Öffnen mit“ kommen als Zwischenkopie der Nextcloud-App (kein Dokument-Speicherort).
+   Hineinschreiben ändert nur die Kopie auf dem Tablet – hochgeladen wird zuverlässig nur über die Nextcloud-Dateiauswahl. */
+const isCloud = h => !!(h && h.native && /^content:\/\/[^/]*(nextcloud|owncloud)/i.test(h.uri || ''));
+const cloudCopy = h => isCloud(h) && !/^content:\/\/[^/]+\/(document|tree)\//i.test(h.uri);
 async function permFix() {
   const name = S.handle?.name || pdfName();
-  $('#permMsg').textContent = `Die App darf „${name}“ gerade nicht mehr überschreiben. Das passiert bei Dateien, die über „Öffnen mit“ aus einer anderen App (z. B. Nextcloud) kamen, sobald die Notizbuch-App neu gestartet oder aktualisiert wurde. Deine Notiz ist sicher in der App gespeichert. ` +
+  if (cloudCopy(S.handle)) $('#permMsg').textContent = `„${name}“ wurde über „Öffnen mit“ aus der Nextcloud-App geöffnet. Dabei landet eine Änderung nur in der Zwischenkopie der Nextcloud-App auf dem Tablet und wird nicht zuverlässig hochgeladen. Deine Notiz ist sicher in der App gespeichert. ` +
+    `Tippe auf „Original auswählen …“, wähle in der Dateiauswahl links „Nextcloud“ und dort dieselbe Datei – danach speichert die App direkt in die Nextcloud.`;
+  else $('#permMsg').textContent = `Die App darf „${name}“ gerade nicht mehr überschreiben. Das passiert bei Dateien, die über „Öffnen mit“ aus einer anderen App (z. B. Nextcloud) kamen, sobald die Notizbuch-App neu gestartet oder aktualisiert wurde. Deine Notiz ist sicher in der App gespeichert. ` +
     `Tippe auf „Original auswählen …“ und wähle dieselbe Datei noch einmal aus – danach speichert die App dauerhaft direkt hinein.`;
   const choice = await dialogChoice($('#permDlg'), 'p');
   if (choice === 'new') return saveToFile(true, name);
@@ -1507,6 +1513,7 @@ async function permFix() {
   let h;
   try { [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'], 'application/octet-stream': ['.pdf'] } }] }); }
   catch { return false; }
+  if (cloudCopy(h)) { toast('Bitte die Datei in der Dateiauswahl über den Eintrag „Nextcloud“ wählen (nicht über „Zuletzt“ oder die Nextcloud-App).', 7000); return false; }
   if (h.name !== name) { toast(`Du hast „${h.name}“ gewählt, nicht „${name}“. Zum Überschreiben bitte genau die Originaldatei wählen.`, 7000); return false; }
   if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') { toast('Diese Datei darf die App nur lesen. Wähle „Als neue Datei …“.', 6000); return false; }
   S.handle = h; await dbPut('handles', { id: S.note.id, handle: h });
@@ -1527,6 +1534,7 @@ async function doSave(pickNew, suggest) {
       return true;
     }
     h = pickNew ? null : S.handle;
+    if (h && cloudCopy(h)) return 'perm';                 // Zwischenkopie der Nextcloud-App: erst richtig auswählen lassen
     if (!h) {
       const name = suggest || (S.handle ? pdfName().replace(/\.pdf$/, ' (bearbeitet).pdf') : pdfName());
       h = created = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'] } }] });
@@ -1566,7 +1574,7 @@ async function doSave(pickNew, suggest) {
     S.note.fileName = h.name;
     S.note.title = h.name; $('#noteTitle').value = h.name;   // Titelzeile zeigt den Dateinamen
     setFileClean();
-    toast(`In „${h.name}“ gespeichert.`);
+    toast(isCloud(h) ? `In „${h.name}“ gespeichert. Die Nextcloud-App lädt die Datei jetzt hoch – bei schlechter Verbindung kann das dauern (Stand in der Nextcloud-App unter „Uploads“).` : `In „${h.name}“ gespeichert.`, isCloud(h) ? 6500 : undefined);
     return true;
   } catch (e) {
     // Eine gerade erst angelegte, leere Datei wieder entfernen
@@ -4816,7 +4824,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 70;
+const APP_VERSION = 71;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -4998,6 +5006,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.5': ['Speichern in die Nextcloud zuverlässiger: Dateien aus „Öffnen mit“ werden erkannt und einmal über die Nextcloud-Dateiauswahl verknüpft, damit Änderungen wirklich hochgeladen werden', 'Beim Überschreiben bleibt kein Rest einer älteren, längeren Datei mehr hängen', 'Nach dem Speichern Hinweis, dass die Nextcloud-App den Upload übernimmt'],
   '5.4': ['Bilder zuschneiden: Bild markieren → „Zuschneiden“, Rahmen an Ecken und Seiten ziehen'],
   '5.3': ['Dämmung jetzt in zwei Varianten: „Dämmung weich“ (Bögen mit sich kreuzenden Schrägen) und „Dämmung hart“ (Zickzack)', 'Stahlbeton: Schraffur unter 45°, abwechselnd durchgezogen und gestrichelt'],
   '5.2': ['Neue Schraffuren für Formen (Bauwesen): Holz mit Faser, Hirnholz, Stahl, Stahlbeton (45°, abwechselnd durchgezogen und gestrichelt), Erdreich, Dämmung weich und Dämmung hart – Knopf neben „Füllung“; bereits gezeichnete Formen über das Stil-Menü schraffieren', 'Schraffuren bleiben im PDF scharfe Linien'],
