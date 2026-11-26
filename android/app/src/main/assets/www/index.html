@@ -136,7 +136,6 @@
       <button data-shape="compass" title="Zirkel: Mittelpunkt setzen und Radius ziehen, dann am Kreis herumfahren"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 6l-5.5 14M12 6l5.5 14M8.2 15.5c2.4 1.2 5.2 1.2 7.6 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="6" r="1.6" fill="currentColor"/></svg></button>
       <button id="btnFill" title="Füllung der Form: aus, hell oder voll"></button>
       <button id="btnHatch" title="Schraffur (Baustoff)"></button>
-      <button id="btnCorner" title="Ecken: spitz, außen rund oder innen rund" hidden></button>
       <button id="btnHead" title="Pfeilspitze: Form und Größe" hidden></button>
       <button id="btnDash" title="Gestrichelte Linie"><svg viewBox="0 0 24 24"><path d="M3 12h4M10 12h4M17 12h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
     </div>
@@ -301,9 +300,10 @@
   </div>
 </div>
 <div id="cornerPop" class="popover head-pop" hidden aria-label="Ecken">
-  <div class="style-title">Ecken</div>
+  <div class="style-title" id="cornerTitle">Ecke</div>
   <div id="cornerKinds" class="hatch-grid corner-grid"></div>
   <label class="corner-r">Radius <input type="number" id="cornerR" min="0.5" max="500" step="0.5" inputmode="decimal"> mm</label>
+  <button id="cornerAll" class="corner-all">Auf alle Ecken anwenden</button>
 </div>
 <div id="hatchPop" class="popover head-pop" hidden aria-label="Schraffur">
   <div class="style-title">Schraffur</div>

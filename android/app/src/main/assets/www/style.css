@@ -615,3 +615,12 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 /* Formen-Gruppe etwas schmaler, damit mit dem Ecken-Knopf alles in die Leiste passt */
 #shapeKinds { gap: 1px; }
 #shapeKinds button { min-width: 32px; padding-left: 6px; padding-right: 6px; }
+
+/* Ecken runden: Punkte an den Ecken der markierten Form */
+.selbox .vtx { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; box-sizing: border-box; border-radius: 4px;
+  background: #fff; border: 2.5px solid #d6336c; z-index: 2; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.selbox .vtx::before { content: ""; position: absolute; inset: -12px; }
+.selbox .vtx.rnd { background: #f8c9d9; }
+.selbox .vtx.on { background: #d6336c; }
+.selbar button.active { background: #2f5d50; color: #fff; }
+.corner-all { margin-top: 10px; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }

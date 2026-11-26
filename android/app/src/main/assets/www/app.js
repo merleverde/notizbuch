@@ -390,13 +390,19 @@ const closedShape = it => it.kind === 'rect' || it.kind === 'ellipse' || it.kind
    Liefert den Umriss (geschlossen), die geraden Kanten und die Rundungsbögen (für die Radius-Bemaßung). */
 const roundCache = new WeakMap();
 const canRound = it => it && it.t === 'shape' && (it.kind === 'rect' || (it.kind === 'poly' && it.pts.length >= 3));
+// Ecken der Form (Rechteck: oben links, oben rechts, unten rechts, unten links)
+const roundVerts = it => it.kind === 'rect'
+  ? (([a, b, c, d]) => [[a, b], [c, b], [c, d], [a, d]])([Math.min(it.x1, it.x2), Math.min(it.y1, it.y2), Math.max(it.x1, it.x2), Math.max(it.y1, it.y2)])
+  : it.pts.map(([x, y]) => [x, y]);
+// Rundung einer einzelnen Ecke: it.corners[i] (null = spitz) hat Vorrang vor it.corner (alle Ecken)
+const cornerAt = (it, i) => Array.isArray(it.corners) ? (it.corners[i] || null) : (it.corner || null);
+const hasRound = it => canRound(it) && !!(it.corner || (Array.isArray(it.corners) && it.corners.some(Boolean)));
 function roundInfo(it) {
   let ri = roundCache.get(it); if (ri) return ri;
-  const V = it.kind === 'rect'
-    ? (([a, b, c, d]) => [[a, b], [c, b], [c, d], [a, d]])([Math.min(it.x1, it.x2), Math.min(it.y1, it.y2), Math.max(it.x1, it.x2), Math.max(it.y1, it.y2)])
-    : it.pts.map(([x, y]) => [x, y]);
-  const n = V.length, R = it.corner?.r || 0, pts = [], arcs = [], ends = [];
+  const V = roundVerts(it);
+  const n = V.length, pts = [], arcs = [], ends = [];
   for (let i = 0; i < n; i++) {
+    const cc = cornerAt(it, i), R = cc?.r || 0;
     const P0 = V[(i - 1 + n) % n], C = V[i], P1 = V[(i + 1) % n];
     const l0 = Math.hypot(P0[0] - C[0], P0[1] - C[1]), l1 = Math.hypot(P1[0] - C[0], P1[1] - C[1]);
     if (!R || l0 < 1e-6 || l1 < 1e-6) { pts.push(C); ends.push([C, C]); continue; }
@@ -404,7 +410,7 @@ function roundInfo(it) {
     const ang = Math.acos(clamp(u0[0] * u1[0] + u0[1] * u1[1], -1, 1));
     if (ang < 0.02 || ang > Math.PI - 0.02) { pts.push(C); ends.push([C, C]); continue; }
     let cen, rr, T0, T1;
-    if (it.corner.t === 'in') {
+    if (cc.t === 'in') {
       rr = Math.min(R, 0.5 * Math.min(l0, l1)); cen = C;
       T0 = [C[0] + u0[0] * rr, C[1] + u0[1] * rr]; T1 = [C[0] + u1[0] * rr, C[1] + u1[1] * rr];
     } else {
@@ -418,7 +424,7 @@ function roundInfo(it) {
     if (sw > Math.PI) sw -= 2 * Math.PI; else if (sw < -Math.PI) sw += 2 * Math.PI;     // kurzer Weg
     const k = Math.max(4, Math.ceil(Math.abs(sw) / 0.14));
     for (let j = 0; j <= k; j++) { const t = a0 + sw * j / k; pts.push([cen[0] + rr * Math.cos(t), cen[1] + rr * Math.sin(t)]); }
-    arcs.push({ cx: cen[0], cy: cen[1], r: rr, a0, a1: a0 + sw });
+    arcs.push({ cx: cen[0], cy: cen[1], r: rr, a0, a1: a0 + sw, v: i });
     ends.push([T0, T1]);
   }
   const edges = ends.map((e, i) => [e[1], ends[(i + 1) % n][0]]);
@@ -432,7 +438,7 @@ function drawShape(ctx, it) {
   const { x1, y1, x2, y2 } = it;
   if (it.dash) ctx.setLineDash([Math.max(3, it.size * 3), Math.max(3, it.size * 2.5)]);
   ctx.beginPath();
-  if (it.corner && canRound(it)) { roundInfo(it).pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
+  if (hasRound(it)) { roundInfo(it).pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
   else if (it.kind === 'poly') { it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
   else if (it.kind === 'rect') ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
   else if (it.kind === 'ellipse') ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2);
@@ -561,7 +567,7 @@ function grainAngle(it, poly) {
 }
 const hatchCache = new Map();
 function hatchLines(it, sc = 1) {
-  const key = sc === 1 && [it.hatch, it.kind, it.x1, it.y1, it.x2, it.y2, it.pts ? it.pts.join(';') : '', it.corner ? it.corner.t + it.corner.r : ''].join('|');
+  const key = sc === 1 && [it.hatch, it.kind, it.x1, it.y1, it.x2, it.y2, it.pts ? it.pts.join(';') : '', it.corner ? it.corner.t + it.corner.r : '', it.corners ? JSON.stringify(it.corners) : ''].join('|');
   if (key && hatchCache.has(key)) return hatchCache.get(key);
   const poly = shapeOutline(it), Q = Math.PI / 4;
   let lines = [];
@@ -767,7 +773,7 @@ function unionBox(bs) {
 const inBox = (b, x, y, m = 0) => x >= b.x - m && x <= b.x + b.w + m && y >= b.y - m && y <= b.y + b.h + m;
 
 function shapeOutline(it) {
-  if (it.corner && canRound(it)) return roundInfo(it).pts;
+  if (hasRound(it)) return roundInfo(it).pts;
   if (it.kind === 'poly') return [...it.pts, it.pts[0]];
   if (it.kind === 'dim') { const d = dimPts(it); return [[it.x1, it.y1], d.a, d.b, [it.x2, it.y2]]; }
   const { x1, y1, x2, y2 } = it;
@@ -803,7 +809,12 @@ function xform(src, fn, k, da = 0, kx = k, ky = k) {
   if (it.t === 'stroke') { it.pts = it.pts.map(([x, y, pr]) => { const [a, b] = fn(x, y); return [+a.toFixed(2), +b.toFixed(2), pr]; }); }
   else if (it.t === 'shape') {
     // Rechteck/Ellipse lassen sich nur als Vieleck drehen
-    if (da && (it.kind === 'rect' || it.kind === 'ellipse')) { it.pts = shapeOutline(it).slice(0, -1); it.kind = 'poly'; }
+    if (da && (it.kind === 'rect' || it.kind === 'ellipse')) { it.pts = it.kind === 'rect' ? roundVerts(it) : shapeOutline(it).slice(0, -1); it.kind = 'poly'; }
+    // gleichmäßig skaliert: Radien wachsen mit
+    if (kx === ky && k !== 1) {
+      if (it.corner) it.corner = { ...it.corner, r: +(it.corner.r * k).toFixed(2) };
+      if (Array.isArray(it.corners)) it.corners = it.corners.map(c => c ? { ...c, r: +(c.r * k).toFixed(2) } : null);
+    }
     if (it.kind === 'poly') it.pts = it.pts.map(([x, y]) => fn(x, y).map(v => +v.toFixed(2)));
     else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); if (it.kind === 'dim' && it.off) it.off *= Math.sqrt(kx * ky); }
   } else {
@@ -1819,6 +1830,8 @@ let penBtn = false;
 
 function penBtnHandler(e) {
   if (e.pointerType !== 'pen' || !S.note) return false;
+  // Stift liegt gerade auf (eigene Aktion läuft): Druck 0 ist dann nur sehr leichtes Aufdrücken, keine Seitentaste
+  if (act && act.pid === e.pointerId && act.tool !== 'btnErase' && e.type === 'pointermove') return false;
   if (e.type === 'pointerout') { if (!e.relatedTarget) penBtn = false; return false; }
   if (e.pressure === 0 && (e.type === 'pointermove' || e.type === 'pointerdown')) {
     const now = (e.buttons & 1) === 1;
@@ -1913,6 +1926,8 @@ function onDown(e) {
   // Ein neues Aufsetzen beendet eine hängengebliebene Stift-Aktion (fehlendes pointerup)
   if (act && act.tool !== 'btnErase' && act.tool !== 'move' && act.tool !== 'scale' && e.pointerType === 'pen') { try { endAct(e); } catch { act = null; } }
   if (penBtnHandler(e)) { e.preventDefault(); return; }
+  if (e.pointerType === 'touch' && act && act.ptype === 'pen') return;      // Handballen beim Schreiben ignorieren
+  if (e.pointerType === 'pen') { clearTimeout(gest?.lpT); gest = null; }     // Stift hat Vorrang vor einem aufliegenden Finger/Ballen
   if (e.pointerType === 'touch' && !prefs.finger && !penButton(e)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = [...touches.values()];
@@ -2019,7 +2034,7 @@ function clearLive(pe) { const c = pe.live, ctx = liveCtx(pe); ctx.setTransform(
 
 function startAct(tool, p, e, extra = {}) {
   const pe = pageEls.get(p.id), rect = pe.el.getBoundingClientRect();
-  act = { tool, p, pe, pid: e.pointerId, rect, k: rect.width / p.w, before: snap(p), ...extra };
+  act = { tool, p, pe, pid: e.pointerId, ptype: e.pointerType, rect, k: rect.width / p.w, before: snap(p), ...extra };
   const [x, y] = toPageA(e.clientX, e.clientY);
   Object.assign(act, { x0: x, y0: y, x, y });
   if (tool !== 'move' && tool !== 'scale' && tool !== 'text') act.ctx = prepLive(pe, p);
@@ -2155,7 +2170,7 @@ function dimSegments(p) {
   const ring = (pts, closed) => { for (let i = 1; i < pts.length; i++) add(pts[i - 1], pts[i]); if (closed && pts.length > 2) add(pts[pts.length - 1], pts[0]); };
   for (const it of p.items) {
     if (it.t === 'shape') {
-      if (it.corner && canRound(it)) roundInfo(it).edges.forEach(([a, b]) => add(a, b));
+      if (hasRound(it)) roundInfo(it).edges.forEach(([a, b]) => add(a, b));
       else if (it.kind === 'poly') ring(it.pts, true);
       else if (it.kind === 'rect') ring([[it.x1, it.y1], [it.x2, it.y1], [it.x2, it.y2], [it.x1, it.y2]], true);
       else if (it.kind === 'line' || it.kind === 'arrow') add([it.x1, it.y1], [it.x2, it.y2]);
@@ -2173,7 +2188,7 @@ function circleCands(p) {
     if (it.t === 'shape' && it.kind === 'ellipse') {
       const rx = Math.abs(it.x2 - it.x1) / 2, ry = Math.abs(it.y2 - it.y1) / 2;
       if (rx > 2 && Math.abs(rx - ry) <= 0.03 * Math.max(rx, ry)) out.push({ cx: (it.x1 + it.x2) / 2, cy: (it.y1 + it.y2) / 2, r: (rx + ry) / 2, a0: 0, a1: Math.PI * 2, full: true });
-    } else if (it.corner && canRound(it)) out.push(...roundInfo(it).arcs);
+    } else if (hasRound(it)) out.push(...roundInfo(it).arcs);
     else if (it.t === 'stroke' && it.style === 'shape' && it.pts.length >= 8) {
       const b = bbox(it), a = fitArc(it.pts, Math.max(b.w, b.h));
       if (a) out.push({ cx: a.cx, cy: a.cy, r: a.r, a0: a.a0, a1: a.a1 });
@@ -2800,7 +2815,6 @@ function shapeFromAct(a = act) {
   if (prefs.dash) base.dash = true;
   if (prefs.fill && prefs.shape !== 'line' && prefs.shape !== 'arrow') { base.fillMode = prefs.fill; base.fill = fillFor(prefs.color, prefs.fill); }
   if (HATCHES[prefs.hatch] && prefs.shape !== 'line' && prefs.shape !== 'arrow') base.hatch = prefs.hatch;
-  if (prefs.corner?.t && (prefs.shape === 'rect' || prefs.shape === 'triangle')) base.corner = { t: prefs.corner.t, r: +((prefs.corner.r || 5) * 72 / 25.4).toFixed(2) };
   if (prefs.shape === 'line' || prefs.shape === 'arrow') {
     const [x2, y2] = snapLine(a.x0, a.y0, a.x, a.y);
     if (prefs.shape === 'arrow') { base.hf = prefs.headForm || 'open'; base.hs = prefs.headSize ?? 1; }
@@ -2898,7 +2912,7 @@ function endAct(e) {
 
 /* ---------------- Auswahl ---------------- */
 function tapSelect(p, x, y) {
-  const r = 8 / scale();
+  const r = 12 / scale();
   const hit = [...p.items].reverse().find(it => hitItem(it, x, y, r));
   setSel(hit ? { p, ids: new Set([hit.id]) } : null);
   // „Einfügen“ nicht mehr beim einfachen Antippen – nur nach 3 s Halten (Wunsch: nicht aus Versehen)
@@ -2989,6 +3003,10 @@ function renderSel() {
   Object.assign(el.style, { left: b.x * sc - pad + 'px', top: b.y * sc - pad + 'px', width: b.w * sc + 2 * pad + 'px', height: b.h * sc + 2 * pad + 'px' });
   el.style.setProperty('--hs', hs.toFixed(1) + 'px');
   const oneFormula = items.length === 1 && isFormula(items[0]);
+  if (S.vtx && !(items.length === 1 && items[0].id === S.vtx.id && canRound(items[0]))) S.vtx = null;
+  const vtxOn = !!S.vtx;
+  // Ecken-Modus: an jeder Ecke ein Punkt zum Antippen
+  const vtxDots = vtxOn ? roundVerts(items[0]).map(([vx, vy], i) => `<div class="vtx${S.vtx.i === i ? ' on' : ''}${cornerAt(items[0], i) ? ' rnd' : ''}" data-v="${i}" title="Ecke ${i + 1} runden" style="left:${((vx - b.x) * sc + pad).toFixed(1)}px;top:${((vy - b.y) * sc + pad).toFixed(1)}px"></div>`).join('') : '';
   // Einzelne Linie/Pfeil: Griffe an beiden Enden; sonst Ecken (proportional) und Seiten (nur Breite/Höhe)
   const line = items.length === 1 && items[0].t === 'shape' && ['line', 'arrow', 'dim'].includes(items[0].kind) ? items[0] : null;
   const grips = line
@@ -2996,10 +3014,16 @@ function renderSel() {
       + (line.kind === 'dim' ? (d => `<div class="lend mid" data-i="3" title="Maßlinie parallel verschieben" style="left:${(((d.a[0] + d.b[0]) / 2 - b.x) * sc + pad).toFixed(1)}px;top:${(((d.a[1] + d.b[1]) / 2 - b.y) * sc + pad).toFixed(1)}px"></div>`)(dimPts(line)) : '')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : items.length === 1 && items[0].t === 'img' ? '<button data-a="crop">Zuschneiden</button>' : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}`;
+  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : items.length === 1 && items[0].t === 'img' ? '<button data-a="crop">Zuschneiden</button>' : items.length === 1 && canRound(items[0]) ? `<button data-a="vtx"${vtxOn ? ' class="active"' : ''}>Ecken runden</button>` : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}${vtxDots}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
-    if (e.target.closest('.selbar') || act) return;
+    if (e.target.closest('.selbar')) return;
+    if (act) {
+      // hängengebliebene Stift-Aktion (fehlendes Loslassen) beenden, sonst reagiert die Auswahl nie wieder
+      if (e.pointerType === 'pen' && act.ptype === 'pen' && act.tool !== 'btnErase') { try { endAct(e); } catch { act = null; } }
+      return;
+    }
+    if (e.target.classList.contains('vtx')) { e.preventDefault(); openVtx(+e.target.dataset.v, e.target); return; }
     e.preventDefault(); hidePops();
     const cl = e.target.classList;
     const mode = cl.contains('lend') ? 'lineEnd' : cl.contains('handle') || cl.contains('edge') ? 'scale' : cl.contains('rot') ? 'rotate' : 'move';
@@ -3020,6 +3044,10 @@ function renderSel() {
     if (a === 'formula') { if (items[0].matrix) openGrid('matrix', p, items[0]); else openFormula(p, items[0]); }
     else if (a === 'edittext') editTextItem(p, items[0]);
     else if (a === 'crop') openCrop(p, items[0]);
+    else if (a === 'vtx') {
+      S.vtx = S.vtx ? null : { id: items[0].id, i: null }; renderSel();
+      if (S.vtx) toast('Tippe die Ecke an, die rund werden soll.', 3000);
+    }
     else if (a === 'edittable') openGrid('table', p, items[0]);
     else if (a === 'dimtext') {
       const it = items[0], v = prompt('Maßzahl (leer lassen = automatisch gemessen):', it.text ?? dimLabel(it));
@@ -4210,10 +4238,6 @@ function updToolbar() {
   $('#shapeKinds').hidden = t !== 'shape';
   $('#btnFill').hidden = ['compass', 'line', 'arrow'].includes(prefs.shape);
   $('#btnHatch').hidden = $('#btnFill').hidden;
-  $('#btnCorner').hidden = !['rect', 'triangle'].includes(prefs.shape);
-  $('#btnCorner').innerHTML = CORNER_ICONS[prefs.corner?.t || 'out'];
-  $('#btnCorner').classList.toggle('active', !!prefs.corner?.t);
-  $('#btnCorner').title = 'Ecken: ' + ({ '': 'spitz', out: 'außen rund', in: 'innen rund' })[prefs.corner?.t || ''] + (prefs.corner?.t ? ` (R ${String(prefs.corner.r).replace('.', ',')} mm)` : '');
   $('#btnHatch').innerHTML = hatchIcon(HATCHES[prefs.hatch] ? prefs.hatch : 'rc');
   $('#btnHatch').title = 'Schraffur: ' + (HATCHES[prefs.hatch]?.label || 'aus');
   $('#btnHatch').classList.toggle('active', !!HATCHES[prefs.hatch]);
@@ -4328,25 +4352,47 @@ var CORNER_ICONS = {
 const CORNER_HTML = [['', 'Spitz'], ['out', 'Außen rund'], ['in', 'Innen rund']].map(([k, l]) => `<button data-corner="${k}" title="${l}">${CORNER_ICONS[k]}<span>${l}</span></button>`).join('');
 $('#cornerKinds').innerHTML = $('#styleCorner').innerHTML = CORNER_HTML;
 prefs.corner ||= { t: '', r: 5 };
-function syncCornerPop() {
-  document.querySelectorAll('#cornerKinds [data-corner]').forEach(b => b.classList.toggle('active', b.dataset.corner === (prefs.corner.t || '')));
-  $('#cornerR').value = prefs.corner.r;
+/* Ecken runden: markierte Form → „Ecken runden“ → Ecke antippen → Art und Radius wählen.
+   Nur diese Ecke ändert sich (wie das Abrunden in CAD-Programmen). S.vtx = { id, i } */
+function vtxItem() { const v = S.vtx, sel = S.sel; return v && sel && sel.ids.has(v.id) ? sel.p.items.find(x => x.id === v.id) : null; }
+function openVtx(i, anchor) {
+  const it = vtxItem(); if (!it) return;
+  S.vtx.i = i; renderSel();
+  const c = cornerAt(it, i);
+  document.querySelectorAll('#cornerKinds [data-corner]').forEach(b => b.classList.toggle('active', b.dataset.corner === (c?.t || '')));
+  $('#cornerR').value = c ? +(c.r * 25.4 / 72).toFixed(1) : prefs.corner.r;
+  $('#cornerTitle').textContent = `Ecke ${i + 1} von ${roundVerts(it).length}`;
+  showPop($('#cornerPop'), document.querySelector(`.selbox .vtx[data-v="${i}"]`) || anchor);
 }
-$('#cornerKinds').addEventListener('click', e => {
-  const b = e.target.closest('[data-corner]'); if (!b) return;
-  prefs.corner.t = b.dataset.corner; savePrefs(); syncCornerPop(); updToolbar();
+function setVtx(t, all) {
+  const it = vtxItem(); if (!it || S.vtx.i == null) return;
+  const mm = clamp(+$('#cornerR').value || prefs.corner.r || 5, 0.5, 500);
+  prefs.corner.r = mm; savePrefs();
+  const r = +(mm * 72 / 25.4).toFixed(2), val = t ? { t, r } : null, n = roundVerts(it).length, i = S.vtx.i;
+  const p = S.sel.p, before = snap(p);
+  const nc = Array.from({ length: n }, (_, j) => all || j === i ? val : cornerAt(it, j));
+  const ni = { ...it }; delete ni.corner;
+  if (nc.some(Boolean)) ni.corners = nc; else delete ni.corners;
+  p.items = p.items.map(x => x.id === it.id ? ni : x);
+  refreshPage(p); commit(p, before); renderSel();
+  document.querySelectorAll('#cornerKinds [data-corner]').forEach(b => b.classList.toggle('active', b.dataset.corner === (t || '')));
+}
+$('#cornerKinds').addEventListener('click', e => { const b = e.target.closest('[data-corner]'); if (b) setVtx(b.dataset.corner, false); });
+$('#cornerAll').addEventListener('click', () => { const b = document.querySelector('#cornerKinds .active'); setVtx(b ? b.dataset.corner : 'out', true); });
+$('#cornerR').addEventListener('change', () => {
+  const it = vtxItem(), c = it && S.vtx.i != null && cornerAt(it, S.vtx.i);
+  if (c) setVtx(c.t, false); else { prefs.corner.r = clamp(+$('#cornerR').value || 5, 0.5, 500); savePrefs(); }
 });
-$('#cornerR').addEventListener('change', e => { prefs.corner.r = clamp(+e.target.value || 5, 0.5, 500); savePrefs(); syncCornerPop(); updToolbar(); });
 // Stil-Menü: Ecken bereits gezeichneter Rechtecke/Vielecke ändern
 $('#styleCorner').addEventListener('click', e => {
   const b = e.target.closest('[data-corner]'); if (!b) return;
   const t = b.dataset.corner, r = +((clamp(+$('#styleCornerR').value || 5, 0.5, 500)) * 72 / 25.4).toFixed(2);
-  applyStyle(it => { if (canRound(it)) { if (t) it.corner = { t, r }; else delete it.corner; } }, true);
+  applyStyle(it => { if (canRound(it)) { delete it.corners; if (t) it.corner = { t, r }; else delete it.corner; } }, true);
   document.querySelectorAll('#styleCorner [data-corner]').forEach(x => x.classList.toggle('active', x === b));
 });
 $('#styleCornerR').addEventListener('change', e => {
   const r = +((clamp(+e.target.value || 5, 0.5, 500)) * 72 / 25.4).toFixed(2);
-  applyStyle(it => { if (canRound(it) && it.corner) it.corner = { ...it.corner, r }; }, true);
+  applyStyle(it => { if (canRound(it) && it.corner) it.corner = { ...it.corner, r }; if (canRound(it) && it.corners) it.corners = it.corners.map(c => c ? { ...c, r } : null); }, true);
 });
 function syncHatchPop() {
   document.querySelectorAll('#hatchPop [data-hatch]').forEach(b => b.classList.toggle('active', b.dataset.hatch === (HATCHES[prefs.hatch] ? prefs.hatch : '')));
@@ -4381,7 +4427,6 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnHead') { syncHeadPop(); showPop($('#headPop'), b); }
   else if (b.id === 'btnHatch') { syncHatchPop(); showPop($('#hatchPop'), b); }
-  else if (b.id === 'btnCorner') { syncCornerPop(); showPop($('#cornerPop'), b); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
   else if (b.dataset.shape) {
     prefs.shape = b.dataset.shape; savePrefs(); updToolbar();
@@ -5203,7 +5248,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 75;
+const APP_VERSION = 76;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5385,6 +5430,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.0': ['Ecken einzeln runden: Rechteck oder Vieleck mit dem Lasso markieren → „Ecken runden“ → Ecke antippen → außen oder innen rund mit eigenem Radius (wie Abrunden im CAD)', 'Lasso: leichtes Aufdrücken mit dem Stift schaltet nicht mehr versehentlich auf Radierer; der Handballen verschiebt beim Schreiben nichts mehr; hängende Auswahl reagiert wieder'],
   '5.9': ['Bemaßung: Mittelpunkt eines Kreises, Bogens oder einer Eckrundung antippen – der Radius wird bemaßt (R …); danach ziehen dreht ihn um den Mittelpunkt', 'Formen: neuer Knopf „Ecken“ – spitz, außen rund oder innen rund mit frei wählbarem Radius (mm); auch für schon gezeichnete Formen im Stil-Menü'],
   '5.8': ['Bögen werden erkannt: Bogen zeichnen und den Stift am Ende kurz ruhig halten – daraus wird ein sauberer Kreisbogen (wie bei Linie, Kreis und Rechteck)'],
   '5.7': ['Endlos-Papier (Neue Notiz → Größe „Endlos“): wächst beim Schreiben am Rand in jede Richtung; im PDF wird der beschriebene Bereich gespeichert, höchstens A0', 'Beim ersten Öffnen einer PDF gibt es einen Hinweis auf die Notizfläche (Menü ⋮)'],
