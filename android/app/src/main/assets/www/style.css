@@ -606,3 +606,12 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 /* Papiergröße im Dialog „Neue Notiz“ */
 .size-pick { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
 .size-pick select { padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
+
+/* Ecken (rund) */
+.hatch-grid.corner-grid { grid-template-columns: repeat(3, minmax(74px, auto)); }
+.corner-r { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: .9rem; }
+.corner-r input { width: 80px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
+
+/* Formen-Gruppe etwas schmaler, damit mit dem Ecken-Knopf alles in die Leiste passt */
+#shapeKinds { gap: 1px; }
+#shapeKinds button { min-width: 32px; padding-left: 6px; padding-right: 6px; }

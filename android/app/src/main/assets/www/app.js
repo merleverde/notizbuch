@@ -302,10 +302,21 @@ function dimLabel(it) {
   if (it.text != null && it.text !== '') return it.text;
   const mm = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) / 72 * 25.4 * (it.scale || 1);
   const u = it.unit ?? 'm', v = u === 'm' ? mm / 1000 : u === 'cm' ? mm / 10 : mm, dec = it.dec ?? 2;
-  return v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (u ? ' ' + u : '');
+  return (it.rad ? 'R ' : '') + v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (u ? ' ' + u : '');
+}
+// Radius: passt die Maßzahl nicht auf die Linie, steht sie außen an der verlängerten Maßlinie (Rückgabe: geschätzte Textbreite)
+function radTextOut(it) {
+  if (!it.rad) return 0;
+  const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1), est = dimLabel(it).length * dimFs(it) * 0.52;
+  return est > len * 0.75 ? est : 0;
 }
 function dimTextPos(it, ax, ay, bx, by) {
   let a = Math.atan2(it.y2 - it.y1, it.x2 - it.x1); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
+  const est = radTextOut(it);
+  if (est) {
+    const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) || 1, d = len + dimFs(it) * 0.4 + est / 2;
+    return { a, mx: it.x1 + (it.x2 - it.x1) / len * d, my: it.y1 + (it.y2 - it.y1) / len * d, off: dimFs(it) * 0.35 + it.size };
+  }
   return { a, mx: (ax + bx) / 2, my: (ay + by) / 2, off: dimFs(it) * 0.35 + it.size };
 }
 /* PDF: Maß als Vektor – Linien wie gewohnt, die Maßzahl als echte Schrift (bleibt beim Heranzoomen am PC scharf) */
@@ -332,6 +343,26 @@ function dimPts(it) {
 function drawDim(ctx, it, noText) {
   const { x1, y1, x2, y2 } = it, len = Math.hypot(x2 - x1, y2 - y1); if (len < 0.5) return;
   const ux = (x2 - x1) / len, uy = (y2 - y1) / len, nx = -uy, ny = ux, fs = dimFs(it);
+  if (it.rad) {
+    // Radius: Linie vom Mittelpunkt zum Bogen, Pfeil am Bogen, kleines Kreuz im Mittelpunkt
+    const al = Math.min(Math.max(6, fs * 0.7), len * 0.45), w = al * 0.32, c = Math.max(2.5, fs * 0.25);
+    ctx.save();
+    ctx.strokeStyle = ctx.fillStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1); ctx.lineTo(x2 - ux * al * 0.8, y2 - uy * al * 0.8);
+    ctx.moveTo(x1 - c, y1); ctx.lineTo(x1 + c, y1); ctx.moveTo(x1, y1 - c); ctx.lineTo(x1, y1 + c);
+    const est = radTextOut(it);
+    if (est) { const e = fs * 0.4 + est; ctx.moveTo(x2, y2); ctx.lineTo(x2 + ux * e, y2 + uy * e); }   // Maßlinie außen verlängert
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x2 - ux * al + nx * w, y2 - uy * al + ny * w); ctx.lineTo(x2 - ux * al - nx * w, y2 - uy * al - ny * w); ctx.closePath(); ctx.fill();
+    if (!noText) {
+      const { a, mx, my, off } = dimTextPos(it, x1, y1, x2, y2);
+      ctx.translate(mx, my); ctx.rotate(a);
+      ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(dimLabel(it), 0, -off);
+    }
+    ctx.restore(); return;
+  }
   const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4), o = it.off || 0, sg = Math.sign(o) || 1;
   const ax = x1 + nx * o, ay = y1 + ny * o, bx = x2 + nx * o, by = y2 + ny * o;     // Maßlinie (parallel verschoben)
   ctx.save();
@@ -355,6 +386,45 @@ function drawDim(ctx, it, noText) {
   ctx.restore();
 }
 const closedShape = it => it.kind === 'rect' || it.kind === 'ellipse' || it.kind === 'poly';
+/* Runde Ecken für Rechteck und Vieleck: it.corner = { t: 'out' (außen rund) | 'in' (innen rund), r: Radius in pt }.
+   Liefert den Umriss (geschlossen), die geraden Kanten und die Rundungsbögen (für die Radius-Bemaßung). */
+const roundCache = new WeakMap();
+const canRound = it => it && it.t === 'shape' && (it.kind === 'rect' || (it.kind === 'poly' && it.pts.length >= 3));
+function roundInfo(it) {
+  let ri = roundCache.get(it); if (ri) return ri;
+  const V = it.kind === 'rect'
+    ? (([a, b, c, d]) => [[a, b], [c, b], [c, d], [a, d]])([Math.min(it.x1, it.x2), Math.min(it.y1, it.y2), Math.max(it.x1, it.x2), Math.max(it.y1, it.y2)])
+    : it.pts.map(([x, y]) => [x, y]);
+  const n = V.length, R = it.corner?.r || 0, pts = [], arcs = [], ends = [];
+  for (let i = 0; i < n; i++) {
+    const P0 = V[(i - 1 + n) % n], C = V[i], P1 = V[(i + 1) % n];
+    const l0 = Math.hypot(P0[0] - C[0], P0[1] - C[1]), l1 = Math.hypot(P1[0] - C[0], P1[1] - C[1]);
+    if (!R || l0 < 1e-6 || l1 < 1e-6) { pts.push(C); ends.push([C, C]); continue; }
+    const u0 = [(P0[0] - C[0]) / l0, (P0[1] - C[1]) / l0], u1 = [(P1[0] - C[0]) / l1, (P1[1] - C[1]) / l1];
+    const ang = Math.acos(clamp(u0[0] * u1[0] + u0[1] * u1[1], -1, 1));
+    if (ang < 0.02 || ang > Math.PI - 0.02) { pts.push(C); ends.push([C, C]); continue; }
+    let cen, rr, T0, T1;
+    if (it.corner.t === 'in') {
+      rr = Math.min(R, 0.5 * Math.min(l0, l1)); cen = C;
+      T0 = [C[0] + u0[0] * rr, C[1] + u0[1] * rr]; T1 = [C[0] + u1[0] * rr, C[1] + u1[1] * rr];
+    } else {
+      const d = Math.min(R / Math.tan(ang / 2), 0.5 * Math.min(l0, l1)); rr = d * Math.tan(ang / 2);
+      const bl = Math.hypot(u0[0] + u1[0], u0[1] + u1[1]), h = rr / Math.sin(ang / 2);
+      cen = [C[0] + (u0[0] + u1[0]) / bl * h, C[1] + (u0[1] + u1[1]) / bl * h];
+      T0 = [C[0] + u0[0] * d, C[1] + u0[1] * d]; T1 = [C[0] + u1[0] * d, C[1] + u1[1] * d];
+    }
+    const a0 = Math.atan2(T0[1] - cen[1], T0[0] - cen[0]);
+    let sw = Math.atan2(T1[1] - cen[1], T1[0] - cen[0]) - a0;
+    if (sw > Math.PI) sw -= 2 * Math.PI; else if (sw < -Math.PI) sw += 2 * Math.PI;     // kurzer Weg
+    const k = Math.max(4, Math.ceil(Math.abs(sw) / 0.14));
+    for (let j = 0; j <= k; j++) { const t = a0 + sw * j / k; pts.push([cen[0] + rr * Math.cos(t), cen[1] + rr * Math.sin(t)]); }
+    arcs.push({ cx: cen[0], cy: cen[1], r: rr, a0, a1: a0 + sw });
+    ends.push([T0, T1]);
+  }
+  const edges = ends.map((e, i) => [e[1], ends[(i + 1) % n][0]]);
+  ri = { pts: [...pts, pts[0]], arcs, edges };
+  roundCache.set(it, ri); return ri;
+}
 function drawShape(ctx, it) {
   if (it.kind === 'dim') return drawDim(ctx, it);
   ctx.save();
@@ -362,7 +432,8 @@ function drawShape(ctx, it) {
   const { x1, y1, x2, y2 } = it;
   if (it.dash) ctx.setLineDash([Math.max(3, it.size * 3), Math.max(3, it.size * 2.5)]);
   ctx.beginPath();
-  if (it.kind === 'poly') { it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
+  if (it.corner && canRound(it)) { roundInfo(it).pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
+  else if (it.kind === 'poly') { it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
   else if (it.kind === 'rect') ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
   else if (it.kind === 'ellipse') ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2);
   else {
@@ -490,7 +561,7 @@ function grainAngle(it, poly) {
 }
 const hatchCache = new Map();
 function hatchLines(it, sc = 1) {
-  const key = sc === 1 && [it.hatch, it.kind, it.x1, it.y1, it.x2, it.y2, it.pts ? it.pts.join(';') : ''].join('|');
+  const key = sc === 1 && [it.hatch, it.kind, it.x1, it.y1, it.x2, it.y2, it.pts ? it.pts.join(';') : '', it.corner ? it.corner.t + it.corner.r : ''].join('|');
   if (key && hatchCache.has(key)) return hatchCache.get(key);
   const poly = shapeOutline(it), Q = Math.PI / 4;
   let lines = [];
@@ -696,6 +767,7 @@ function unionBox(bs) {
 const inBox = (b, x, y, m = 0) => x >= b.x - m && x <= b.x + b.w + m && y >= b.y - m && y <= b.y + b.h + m;
 
 function shapeOutline(it) {
+  if (it.corner && canRound(it)) return roundInfo(it).pts;
   if (it.kind === 'poly') return [...it.pts, it.pts[0]];
   if (it.kind === 'dim') { const d = dimPts(it); return [[it.x1, it.y1], d.a, d.b, [it.x2, it.y2]]; }
   const { x1, y1, x2, y2 } = it;
@@ -1984,7 +2056,8 @@ function startAct(tool, p, e, extra = {}) {
       if (tool === 'pen' && prefs.dim) {
         act.dimMode = true;
         const [fx, fy, h] = fangAt(act, x, y); Object.assign(act.recog, { x1: fx, y1: fy, x2: fx, y2: fy }); act.fA = h;
-        act.hoverSeg = dimHoverAt(p, x, y, act.k)?.seg || null; dimHover = null;   // Antippen einer Linie = sie bemaßen
+        const hh = dimHoverAt(p, x, y, act.k); dimHover = null;
+        act.hoverSeg = hh?.seg || null; act.hoverCirc = hh?.circ || null;   // Antippen: Linie bzw. Radius bemaßen
       }
       const a = act;
       a.lpT = setTimeout(() => { if (act === a && getClip()) longPressPaste(a, a.x0, a.y0); }, 2000);
@@ -2082,7 +2155,8 @@ function dimSegments(p) {
   const ring = (pts, closed) => { for (let i = 1; i < pts.length; i++) add(pts[i - 1], pts[i]); if (closed && pts.length > 2) add(pts[pts.length - 1], pts[0]); };
   for (const it of p.items) {
     if (it.t === 'shape') {
-      if (it.kind === 'poly') ring(it.pts, true);
+      if (it.corner && canRound(it)) roundInfo(it).edges.forEach(([a, b]) => add(a, b));
+      else if (it.kind === 'poly') ring(it.pts, true);
       else if (it.kind === 'rect') ring([[it.x1, it.y1], [it.x2, it.y1], [it.x2, it.y2], [it.x1, it.y2]], true);
       else if (it.kind === 'line' || it.kind === 'arrow') add([it.x1, it.y1], [it.x2, it.y2]);
     } else if (it.t === 'stroke') {
@@ -2093,14 +2167,32 @@ function dimSegments(p) {
   return out;
 }
 const dimGeoCache = new WeakMap();
+function circleCands(p) {
+  const out = [];
+  for (const it of p.items) {
+    if (it.t === 'shape' && it.kind === 'ellipse') {
+      const rx = Math.abs(it.x2 - it.x1) / 2, ry = Math.abs(it.y2 - it.y1) / 2;
+      if (rx > 2 && Math.abs(rx - ry) <= 0.03 * Math.max(rx, ry)) out.push({ cx: (it.x1 + it.x2) / 2, cy: (it.y1 + it.y2) / 2, r: (rx + ry) / 2, a0: 0, a1: Math.PI * 2, full: true });
+    } else if (it.corner && canRound(it)) out.push(...roundInfo(it).arcs);
+    else if (it.t === 'stroke' && it.style === 'shape' && it.pts.length >= 8) {
+      const b = bbox(it), a = fitArc(it.pts, Math.max(b.w, b.h));
+      if (a) out.push({ cx: a.cx, cy: a.cy, r: a.r, a0: a.a0, a1: a.a1 });
+    }
+  }
+  return out;
+}
 function dimGeo(p) {
   const c = dimGeoCache.get(p), key = p.items.length + ':' + (p.items[p.items.length - 1]?.id || '');
   if (c && c.items === p.items && c.key === key) return c;
-  const g = { items: p.items, key, pts: fangPoints(p), segs: dimSegments(p) };
+  const g = { items: p.items, key, pts: fangPoints(p), segs: dimSegments(p), circs: circleCands(p) };
   dimGeoCache.set(p, g); return g;
 }
 function dimHoverAt(p, x, y, k) {
   const g = dimGeo(p);
+  // Mittelpunkt eines Kreises/Bogens/einer Eckrundung: Radius bemaßen
+  let circ = null, ccd = 12 / k;
+  for (const c of g.circs) { const d = Math.hypot(c.cx - x, c.cy - y); if (d < ccd) { ccd = d; circ = c; } }
+  if (circ) return { circ };
   let corner = null, cd = 11 / k;
   for (const q of g.pts) { const d = Math.hypot(q[0] - x, q[1] - y); if (d < cd) { cd = d; corner = q; } }
   if (corner) return { corner: [corner[0], corner[1]] };
@@ -2124,7 +2216,17 @@ function onDimHover(e) {
   dimHover = { pid: p.id, key };
   const ctx = prepLive(pe, p);
   ctx.save(); ctx.strokeStyle = ctx.fillStyle = '#e0337a';
-  if (h.seg) {
+  if (h.circ) {
+    const c = h.circ;
+    ctx.globalAlpha = 0.35; ctx.lineWidth = 7 / k; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(c.cx, c.cy, c.r, Math.min(c.a0, c.a1), Math.max(c.a0, c.a1)); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(c.cx, c.cy, 4 / k, 0, Math.PI * 2); ctx.fill();
+    const fs = 12 / k, t = dimLabel({ x1: 0, y1: 0, x2: c.r, y2: 0, rad: true, scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2 }) + ' – antippen';
+    ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'bottom';
+    const tw = ctx.measureText(t).width, mx = c.cx, my = c.cy - 10 / k;
+    ctx.fillStyle = 'rgba(28,35,33,.85)'; ctx.fillRect(mx - tw / 2 - 5 / k, my - fs - 4 / k, tw + 10 / k, fs + 7 / k);
+    ctx.fillStyle = '#fff'; ctx.fillText(t, mx - tw / 2, my);
+  } else if (h.seg) {
     const [[x1, y1], [x2, y2]] = h.seg;
     ctx.globalAlpha = 0.35; ctx.lineWidth = 7 / k; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
@@ -2146,7 +2248,7 @@ function dimFromRecog(a) {
   const r = a.recog, pen = prefs.sizes.pen || 1.5;
   return { t: 'shape', id: a.dimId ||= uid(), kind: 'dim', x1: +r.x1.toFixed(2), y1: +r.y1.toFixed(2), x2: +r.x2.toFixed(2), y2: +r.y2.toFixed(2),
     color: prefs.color, size: +Math.max(0.6, Math.min(pen, 2) * 0.6).toFixed(2), fs: +Math.max(8, prefs.textSize * 0.75).toFixed(1),
-    scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2 };
+    scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2, ...(a.radDim ? { rad: true } : {}) };
 }
 /* Beim Ziehen einer Geraden: Winkel zur Waagerechten und Länge neben dem Linienende anzeigen */
 function drawLineInfo(ctx, x1, y1, x2, y2, k) {
@@ -2499,7 +2601,8 @@ function moveAct(e) {
   else if (t === 'dimOffset') {
     const d = act.dim, { nx, ny } = dimPts(d), p = act.p;
     const off = +(act.off0 + (x - act.x0) * nx + (y - act.y0) * ny).toFixed(2);
-    const nd = { ...d, off }, old = act.cur || d;
+    const rr = Math.hypot(d.x2 - d.x1, d.y2 - d.y1), an = Math.atan2(y - d.y1, x - d.x1);
+    const nd = d.rad ? { ...d, x2: +(d.x1 + rr * Math.cos(an)).toFixed(2), y2: +(d.y1 + rr * Math.sin(an)).toFixed(2) } : { ...d, off }, old = act.cur || d;
     p.items = p.items.map(i => i.id === d.id ? nd : i);
     act.cur = nd; renderRegionSoon(act.pe, p, unionBox([bbox(old), bbox(nd)]));
   }
@@ -2697,6 +2800,7 @@ function shapeFromAct(a = act) {
   if (prefs.dash) base.dash = true;
   if (prefs.fill && prefs.shape !== 'line' && prefs.shape !== 'arrow') { base.fillMode = prefs.fill; base.fill = fillFor(prefs.color, prefs.fill); }
   if (HATCHES[prefs.hatch] && prefs.shape !== 'line' && prefs.shape !== 'arrow') base.hatch = prefs.hatch;
+  if (prefs.corner?.t && (prefs.shape === 'rect' || prefs.shape === 'triangle')) base.corner = { t: prefs.corner.t, r: +((prefs.corner.r || 5) * 72 / 25.4).toFixed(2) };
   if (prefs.shape === 'line' || prefs.shape === 'arrow') {
     const [x2, y2] = snapLine(a.x0, a.y0, a.x, a.y);
     if (prefs.shape === 'arrow') { base.hf = prefs.headForm || 'open'; base.hs = prefs.headSize ?? 1; }
@@ -2748,7 +2852,13 @@ function endAct(e) {
   } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
     // nur angetippt, aber auf einer Linie/Kante: genau diese Strecke bemaßen
-    if (a.dimMode && a.hoverSeg && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4) { const [[x1, y1], [x2, y2]] = a.hoverSeg; Object.assign(r, { x1, y1, x2, y2 }); }
+    if (a.dimMode && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4) {
+      if (a.hoverCirc) {
+        // Mittelpunkt angetippt: Radius zur Mitte des Bogens (Vollkreis: schräg nach rechts oben)
+        const c = a.hoverCirc, m = c.full ? -Math.PI / 4 : (c.a0 + c.a1) / 2;
+        Object.assign(r, { x1: c.cx, y1: c.cy, x2: c.cx + c.r * Math.cos(m), y2: c.cy + c.r * Math.sin(m) }); a.radDim = true;
+      } else if (a.hoverSeg) { const [[x1, y1], [x2, y2]] = a.hoverSeg; Object.assign(r, { x1, y1, x2, y2 }); }
+    }
     const tiny = r.kind === 'markerLine' && Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k < 4;
     const it = tiny ? null : a.dimMode ? dimFromRecog(a) : r.kind === 'markerLine' ? { ...a.item, pts: [[+r.x1.toFixed(2), +r.y1.toFixed(2), .5], [+r.x2.toFixed(2), +r.y2.toFixed(2), .5]] } : r;
     if (it) addStrokes(pe, p, [it]);
@@ -2756,6 +2866,7 @@ function endAct(e) {
     if (it && a.dimMode) {
       S.dimPending = { pid: p.id, id: it.id };
       if ((prefs.dimOffHint || 0) < 3) { prefs.dimOffHint = (prefs.dimOffHint || 0) + 1; savePrefs(); toast('Jetzt irgendwo aufsetzen und seitlich ziehen: die Maßlinie wandert parallel mit. Kurz tippen = so lassen.', 5000); }
+      if (it.rad && !prefs.radHint) { prefs.radHint = true; savePrefs(); toast('Radius bemaßt. Jetzt aufsetzen und ziehen: der Radius dreht sich um den Mittelpunkt. Kurz tippen = so lassen.', 5500); }
     }
   } else if (tool === 'pen' || tool === 'marker' || tool === 'cover') {
     smoothStroke(a);
@@ -3156,6 +3267,13 @@ function openStylePop(anchor) {
     box.appendChild(b);
   }
   $('#styleSizeRow').hidden = !sized.length;
+  const roundable = items.filter(canRound);
+  $('#styleCornerRow').hidden = !roundable.length;
+  if (roundable.length) {
+    const c0 = roundable[0].corner, same = roundable.every(i => (i.corner?.t || '') === (c0?.t || ''));
+    document.querySelectorAll('#styleCorner [data-corner]').forEach(b => b.classList.toggle('active', same && b.dataset.corner === (c0?.t || '')));
+    $('#styleCornerR').value = c0 ? +(c0.r * 25.4 / 72).toFixed(1) : prefs.corner.r;
+  }
   const closed = items.filter(i => i.t === 'shape' && closedShape(i));
   $('#styleHatchRow').hidden = !closed.length;
   const curH = closed.length && closed.every(i => (i.hatch || '') === (closed[0].hatch || '')) ? (closed[0].hatch || '') : null;
@@ -4092,6 +4210,10 @@ function updToolbar() {
   $('#shapeKinds').hidden = t !== 'shape';
   $('#btnFill').hidden = ['compass', 'line', 'arrow'].includes(prefs.shape);
   $('#btnHatch').hidden = $('#btnFill').hidden;
+  $('#btnCorner').hidden = !['rect', 'triangle'].includes(prefs.shape);
+  $('#btnCorner').innerHTML = CORNER_ICONS[prefs.corner?.t || 'out'];
+  $('#btnCorner').classList.toggle('active', !!prefs.corner?.t);
+  $('#btnCorner').title = 'Ecken: ' + ({ '': 'spitz', out: 'außen rund', in: 'innen rund' })[prefs.corner?.t || ''] + (prefs.corner?.t ? ` (R ${String(prefs.corner.r).replace('.', ',')} mm)` : '');
   $('#btnHatch').innerHTML = hatchIcon(HATCHES[prefs.hatch] ? prefs.hatch : 'rc');
   $('#btnHatch').title = 'Schraffur: ' + (HATCHES[prefs.hatch]?.label || 'aus');
   $('#btnHatch').classList.toggle('active', !!HATCHES[prefs.hatch]);
@@ -4197,6 +4319,35 @@ $('#headPop').addEventListener('click', e => {
 /* Schraffur-Auswahl (Formen) */
 $('#hatchGrid').innerHTML = $('#styleHatch').innerHTML = [['', 'Keine', 'Keine Schraffur'], ...Object.entries(HATCHES).map(([k, v]) => [k, v.label, v.title])]
   .map(([k, l, t]) => `<button data-hatch="${k}" title="${t}">${hatchIcon(k)}<span>${l}</span></button>`).join('');
+/* Ecken: spitz / außen rund / innen rund, Radius in mm (auf dem Papier) */
+var CORNER_ICONS = {
+  '': '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+  out: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+  in: '<svg viewBox="0 0 24 24"><path d="M9 5h6a5 5 0 0 0 5 5v4a5 5 0 0 0-5 5H9a5 5 0 0 0-5-5v-4a5 5 0 0 0 5-5z" fill="none" stroke="currentColor" stroke-width="2"/></svg>'
+};
+const CORNER_HTML = [['', 'Spitz'], ['out', 'Außen rund'], ['in', 'Innen rund']].map(([k, l]) => `<button data-corner="${k}" title="${l}">${CORNER_ICONS[k]}<span>${l}</span></button>`).join('');
+$('#cornerKinds').innerHTML = $('#styleCorner').innerHTML = CORNER_HTML;
+prefs.corner ||= { t: '', r: 5 };
+function syncCornerPop() {
+  document.querySelectorAll('#cornerKinds [data-corner]').forEach(b => b.classList.toggle('active', b.dataset.corner === (prefs.corner.t || '')));
+  $('#cornerR').value = prefs.corner.r;
+}
+$('#cornerKinds').addEventListener('click', e => {
+  const b = e.target.closest('[data-corner]'); if (!b) return;
+  prefs.corner.t = b.dataset.corner; savePrefs(); syncCornerPop(); updToolbar();
+});
+$('#cornerR').addEventListener('change', e => { prefs.corner.r = clamp(+e.target.value || 5, 0.5, 500); savePrefs(); syncCornerPop(); updToolbar(); });
+// Stil-Menü: Ecken bereits gezeichneter Rechtecke/Vielecke ändern
+$('#styleCorner').addEventListener('click', e => {
+  const b = e.target.closest('[data-corner]'); if (!b) return;
+  const t = b.dataset.corner, r = +((clamp(+$('#styleCornerR').value || 5, 0.5, 500)) * 72 / 25.4).toFixed(2);
+  applyStyle(it => { if (canRound(it)) { if (t) it.corner = { t, r }; else delete it.corner; } }, true);
+  document.querySelectorAll('#styleCorner [data-corner]').forEach(x => x.classList.toggle('active', x === b));
+});
+$('#styleCornerR').addEventListener('change', e => {
+  const r = +((clamp(+e.target.value || 5, 0.5, 500)) * 72 / 25.4).toFixed(2);
+  applyStyle(it => { if (canRound(it) && it.corner) it.corner = { ...it.corner, r }; }, true);
+});
 function syncHatchPop() {
   document.querySelectorAll('#hatchPop [data-hatch]').forEach(b => b.classList.toggle('active', b.dataset.hatch === (HATCHES[prefs.hatch] ? prefs.hatch : '')));
 }
@@ -4230,6 +4381,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnHead') { syncHeadPop(); showPop($('#headPop'), b); }
   else if (b.id === 'btnHatch') { syncHatchPop(); showPop($('#hatchPop'), b); }
+  else if (b.id === 'btnCorner') { syncCornerPop(); showPop($('#cornerPop'), b); }
   else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
   else if (b.dataset.shape) {
     prefs.shape = b.dataset.shape; savePrefs(); updToolbar();
@@ -5051,7 +5203,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 74;
+const APP_VERSION = 75;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5233,6 +5385,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '5.9': ['Bemaßung: Mittelpunkt eines Kreises, Bogens oder einer Eckrundung antippen – der Radius wird bemaßt (R …); danach ziehen dreht ihn um den Mittelpunkt', 'Formen: neuer Knopf „Ecken“ – spitz, außen rund oder innen rund mit frei wählbarem Radius (mm); auch für schon gezeichnete Formen im Stil-Menü'],
   '5.8': ['Bögen werden erkannt: Bogen zeichnen und den Stift am Ende kurz ruhig halten – daraus wird ein sauberer Kreisbogen (wie bei Linie, Kreis und Rechteck)'],
   '5.7': ['Endlos-Papier (Neue Notiz → Größe „Endlos“): wächst beim Schreiben am Rand in jede Richtung; im PDF wird der beschriebene Bereich gespeichert, höchstens A0', 'Beim ersten Öffnen einer PDF gibt es einen Hinweis auf die Notizfläche (Menü ⋮)'],
   '5.6': ['Bemaßung: Stift über eine Linie oder Kante schweben lassen – sie leuchtet auf, Antippen bemaßt sie direkt; Ecken werden als Fangpunkt angezeigt', 'Neue Notizen in den Formaten A0 bis A5 (hoch oder quer)', 'PDF mit Notizfläche: Menü ⋮ → „Notizfläche neben PDF-Seiten“ setzt rechts neben jede PDF-Seite eine karierte Fläche für Notizen'],
