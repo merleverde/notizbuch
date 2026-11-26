@@ -1917,13 +1917,16 @@ function panVelocity(g) {
   return [(b.x - a.x) / dt, (b.y - a.y) / dt];
 }
 
-function onDown(e) {
+function onDown(e, viaSel) {
   stopFling();
-  if (e.target.closest('.tx.editing, .selbox, .pastechip')) return;
+  if (!viaSel && e.target.closest('.tx.editing, .selbox, .pastechip')) return;
   removePasteChip();
   if (S.editing) commitText();
   hidePops();
   // Ein neues Aufsetzen beendet eine hängengebliebene Stift-Aktion (fehlendes pointerup)
+  if (act && act.ptype === 'touch' && e.pointerType === 'pen' && ['pen', 'marker', 'shape', 'lasso', 'stamp'].includes(act.tool)) {
+    clearTimeout(act.hold?.t); clearTimeout(act.lpT); if (act.ctx) clearLive(act.pe); act = null;
+  }
   if (act && act.tool !== 'btnErase' && act.tool !== 'move' && act.tool !== 'scale' && e.pointerType === 'pen') { try { endAct(e); } catch { act = null; } }
   if (penBtnHandler(e)) { e.preventDefault(); return; }
   if (e.pointerType === 'touch' && act && act.ptype === 'pen') return;      // Handballen beim Schreiben ignorieren
@@ -2311,7 +2314,7 @@ function addPts(e) {
   const al = it.tool === 'cover' ? 1 : SMOOTH_ALPHA[prefs.smoothing] ?? 1;
   for (const ev of evs) {
     let [x, y] = toPageA(ev.clientX, ev.clientY);
-    let pr = ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5;
+    let pr = ev.pointerType === 'pen' ? (ev.pressure > 0 ? ev.pressure : (it.pts.length ? it.pts[it.pts.length - 1][2] : 0.15)) : 0.5;
     if (al < 1) {
       // Stabilisierung: die Strichspitze folgt dem Stift weich nach und filtert Zittern heraus
       act.raw = [x, y, pr];
@@ -3024,6 +3027,8 @@ function renderSel() {
       return;
     }
     if (e.target.classList.contains('vtx')) { e.preventDefault(); openVtx(+e.target.dataset.v, e.target); return; }
+    // Stift mit Zeichenwerkzeug (z. B. Bild vorher mit dem Finger angetippt): Auswahl aufheben und normal zeichnen
+    if (e.pointerType === 'pen' && !['lasso', 'text'].includes(prefs.tool) && !penButton(e)) { setSel(null); onDown(e, true); return; }
     e.preventDefault(); hidePops();
     const cl = e.target.classList;
     const mode = cl.contains('lend') ? 'lineEnd' : cl.contains('handle') || cl.contains('edge') ? 'scale' : cl.contains('rot') ? 'rotate' : 'move';
@@ -5430,7 +5435,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
-  '6.0': ['Ecken einzeln runden: Rechteck oder Vieleck mit dem Lasso markieren → „Ecken runden“ → Ecke antippen → außen oder innen rund mit eigenem Radius (wie Abrunden im CAD)', 'Lasso: leichtes Aufdrücken mit dem Stift schaltet nicht mehr versehentlich auf Radierer; der Handballen verschiebt beim Schreiben nichts mehr; hängende Auswahl reagiert wieder'],
+  '6.0': ['Ecken einzeln runden: Rechteck oder Vieleck mit dem Lasso markieren → „Ecken runden“ → Ecke antippen → außen oder innen rund mit eigenem Radius (wie Abrunden im CAD)', 'Lasso und Stift: leichtes Aufdrücken schaltet nicht mehr versehentlich auf Radierer und macht keine dicken Kleckse mehr; der Handballen verschiebt oder malt beim Schreiben nichts mehr; hängende Auswahl reagiert wieder', 'Stift zeichnet auch über einem mit dem Finger angetippten Bild, statt es zu verschieben'],
   '5.9': ['Bemaßung: Mittelpunkt eines Kreises, Bogens oder einer Eckrundung antippen – der Radius wird bemaßt (R …); danach ziehen dreht ihn um den Mittelpunkt', 'Formen: neuer Knopf „Ecken“ – spitz, außen rund oder innen rund mit frei wählbarem Radius (mm); auch für schon gezeichnete Formen im Stil-Menü'],
   '5.8': ['Bögen werden erkannt: Bogen zeichnen und den Stift am Ende kurz ruhig halten – daraus wird ein sauberer Kreisbogen (wie bei Linie, Kreis und Rechteck)'],
   '5.7': ['Endlos-Papier (Neue Notiz → Größe „Endlos“): wächst beim Schreiben am Rand in jede Richtung; im PDF wird der beschriebene Bereich gespeichert, höchstens A0', 'Beim ersten Öffnen einer PDF gibt es einen Hinweis auf die Notizfläche (Menü ⋮)'],
