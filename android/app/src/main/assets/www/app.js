@@ -1978,7 +1978,12 @@ function onMove(e) {
     }
     return;
   }
-  if (act && e.pointerId === act.pid) moveAct(e);
+  if (act && e.pointerId === act.pid) {
+    // Das Tablet hat das Abheben nicht gemeldet: der Stift schwebt schon wieder (keine Berührung).
+    // Dann den Strich hier beenden – sonst würde neben der schwebenden Spitze weitergezeichnet.
+    if (e.pointerType === 'pen' && e.buttons === 0 && act.tool !== 'btnErase') { try { endAct(e); } catch { act = null; } return; }
+    moveAct(e);
+  }
 }
 function onUp(e) {
   if (penBtnHandler(e)) return;
@@ -2598,6 +2603,14 @@ function eraseAt(x, y) {
 }
 function moveAct(e) {
   if (act.tool === 'btnErase') return btnEraseMove(e);
+  const nr = act.pe.el.getBoundingClientRect();
+  if (Math.abs(nr.left - act.rect.left) > 0.5 || Math.abs(nr.top - act.rect.top) > 0.5 || Math.abs(nr.width - act.rect.width) > 0.5) {
+    act.rect = nr; act.k = nr.width / act.p.w;
+    if (act.ctx) {
+      act.ctx = prepLive(act.pe, act.p);
+      if (act.item && act.item.pts?.length && !act.recog) { if (act.item.tool === 'pen' && penStyle(act.item).grain) drawPencil(act.ctx, act.item); else drawStroke(act.ctx, act.item); }
+    }
+  }
   const [x, y] = toPageA(e.clientX, e.clientY);
   if (act.lp) return;                                     // „Einfügen“ wird angeboten: Bewegung ignorieren
   if (act.lpT && Math.hypot(x - act.x0, y - act.y0) * act.k > 8) { clearTimeout(act.lpT); act.lpT = 0; }
@@ -5253,7 +5266,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 76;
+const APP_VERSION = 77;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5435,6 +5448,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.1': ['Stift: meldet das Tablet das Abheben nicht, wird nicht mehr neben der schwebenden Spitze weitergezeichnet', 'Stift: bewegt sich die Seite während des Schreibens, bleibt der Strich trotzdem genau unter der Spitze'],
   '6.0': ['Ecken einzeln runden: Rechteck oder Vieleck mit dem Lasso markieren → „Ecken runden“ → Ecke antippen → außen oder innen rund mit eigenem Radius (wie Abrunden im CAD)', 'Lasso und Stift: leichtes Aufdrücken schaltet nicht mehr versehentlich auf Radierer und macht keine dicken Kleckse mehr; der Handballen verschiebt oder malt beim Schreiben nichts mehr; hängende Auswahl reagiert wieder', 'Stift zeichnet auch über einem mit dem Finger angetippten Bild, statt es zu verschieben'],
   '5.9': ['Bemaßung: Mittelpunkt eines Kreises, Bogens oder einer Eckrundung antippen – der Radius wird bemaßt (R …); danach ziehen dreht ihn um den Mittelpunkt', 'Formen: neuer Knopf „Ecken“ – spitz, außen rund oder innen rund mit frei wählbarem Radius (mm); auch für schon gezeichnete Formen im Stil-Menü'],
   '5.8': ['Bögen werden erkannt: Bogen zeichnen und den Stift am Ende kurz ruhig halten – daraus wird ein sauberer Kreisbogen (wie bei Linie, Kreis und Rechteck)'],
