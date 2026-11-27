@@ -515,7 +515,7 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; co
 /* Statik-Stempel */
 .statik-pop { width: 420px; padding: 12px 14px; gap: 8px; }
 .statik-grid { display: grid; gap: 6px; }
-.statik-grid.sup { grid-template-columns: repeat(5, 1fr); }
+.statik-grid.sup { grid-template-columns: repeat(4, 1fr); }
 .statik-grid.sys { grid-template-columns: repeat(3, 1fr); }
 .popover .statik-grid button {
   display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px 5px;
@@ -624,3 +624,10 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 .selbox .vtx.on { background: #d6336c; }
 .selbar button.active { background: #2f5d50; color: #fff; }
 .corner-all { margin-top: 10px; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
+
+/* Durchlaufträger: Vorschau + Feldanzahl/Feldlänge */
+.durch-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.statik-grid.durch { grid-template-columns: auto; }
+.durch-opts { display: flex; flex-direction: column; gap: 6px; font-size: .9rem; }
+.durch-opts label { display: flex; align-items: center; gap: 6px; }
+.durch-opts input { width: 64px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }

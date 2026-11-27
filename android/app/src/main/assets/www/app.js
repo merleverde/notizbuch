@@ -3813,7 +3813,8 @@ const STAMPS = [
    Einheit = Stempelgröße s; Auflager haben ihren Anschlusspunkt bei (0|0). */
 const STATIK_SUPPORTS = [
   { id: 'fest', title: 'Festlager' }, { id: 'los', title: 'Loslager' },
-  { id: 'einspL', title: 'Einspannung links' }, { id: 'einspR', title: 'Einspannung rechts' }, { id: 'gelenk', title: 'Gelenk' }
+  { id: 'einspL', title: 'Einspannung links' }, { id: 'einspR', title: 'Einspannung rechts' }, { id: 'gelenk', title: 'Gelenk' },
+  { id: 'ngelenk', title: 'Normalkraftgelenk' }, { id: 'qgelenk', title: 'Querkraftgelenk' }
 ];
 const STATIK_SYSTEMS = [
   { id: 'einfeld', title: 'Einfeldträger' }, { id: 'krag', title: 'Kragarm' }, { id: 'ueberstand', title: 'Einfeldträger mit Kragarm' },
@@ -3821,14 +3822,18 @@ const STATIK_SYSTEMS = [
   { id: 'gerber', title: 'Gelenkträger (Gerber)' }, { id: 'zweigelenk', title: 'Zweigelenkrahmen' }, { id: 'dreigelenk', title: 'Dreigelenkrahmen' }
 ];
 const STATIK_LOADS = [
-  { id: 'F', title: 'Einzellast' }, { id: 'Fh', title: 'Horizontallast' }, { id: 'q', title: 'Streckenlast' }, { id: 'dreieck', title: 'Dreieckslast' },
-  { id: 'trapez', title: 'Trapezlast' }, { id: 'Mr', title: 'Moment rechtsdrehend' }, { id: 'Ml', title: 'Moment linksdrehend' }
+  { id: 'F', title: 'Einzellast' }, { id: 'Fh', title: 'Horizontallast →' }, { id: 'FhL', title: 'Horizontallast ←' }, { id: 'q', title: 'Streckenlast' },
+  { id: 'dreieck', title: 'Dreieckslast (rechts hoch)' }, { id: 'dreieckL', title: 'Dreieckslast (links hoch)' },
+  { id: 'trapez', title: 'Trapezlast (rechts hoch)' }, { id: 'trapezL', title: 'Trapezlast (links hoch)' },
+  { id: 'Mr', title: 'Moment rechtsdrehend' }, { id: 'Ml', title: 'Moment linksdrehend' }
 ];
-function statikItems(id, s, color) {
+// Durchlaufträger: Feldanzahl und Feldlänge (cm auf dem Papier) frei wählbar
+const durchCfg = () => { const d = prefs.durch || {}; return { n: clamp(Math.round(+d.n || 3), 1, 10), L: clamp(+d.L || 3, 0.5, 50) }; };
+function statikItems(id, s, color, opt = {}) {
   const thin = Math.max(1, s * 0.04), thick = Math.max(1.6, s * 0.08), out = [], late = [];
   // Bei Balkensystemen sitzt das Lager direkt am Balken – ein Kreis dort sähe aus wie ein Momentengelenk im Balken
   // (beim Durchlaufträger wäre das System dann kinematisch). Kreise nur bei einzelnen Auflagern und an Rahmenfüßen.
-  const pins = !['einfeld', 'krag', 'ueberstand', 'zweifeld', 'einsplos', 'beids', 'gerber'].includes(id);
+  const pins = !['einfeld', 'krag', 'ueberstand', 'zweifeld', 'einsplos', 'beids', 'gerber', 'durch'].includes(id);
   const L = (pts, w = thin) => out.push(stampLine(pts.map(([x, y]) => [x * s, y * s]), color, w));
   const hinge = (x, y, r) => late.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: (x - r) * s, y1: (y - r) * s, x2: (x + r) * s, y2: (y + r) * s, color, size: thin, fill: '#ffffff', fillMode: 2 });
   const hatch = (x1, x2, y, k) => { for (let x = x1 + 0.12 * k; x <= x2 + 1e-6; x += 0.2 * k) L([[x, y], [x - 0.15 * k, y + 0.17 * k]]); };
@@ -3870,6 +3875,10 @@ function statikItems(id, s, color) {
     case 'einspL': wall(0, 0, 1, -1); break;
     case 'einspR': wall(0, 0, 1, 1); break;
     case 'gelenk': hinge(0, 0, 0.12); break;
+    // Normalkraftgelenk (N = 0): Balkenenden zwischen zwei Linien parallel zur Achse – verschieblich in Längsrichtung
+    case 'ngelenk': beam(-0.9, -0.06); beam(0.06, 0.9); L([[-0.35, -0.22], [0.35, -0.22]], thick); L([[-0.35, 0.22], [0.35, 0.22]], thick); break;
+    // Querkraftgelenk (V = 0): zwei Linien quer zur Achse – Parallelführung, verschieblich quer zum Balken
+    case 'qgelenk': beam(-0.9, -0.09); beam(0.09, 0.9); L([[-0.09, -0.3], [-0.09, 0.3]], thick); L([[0.09, -0.3], [0.09, 0.3]], thick); break;
     case 'einfeld': beam(-2, 2); tri(-2, 0, k); tri(2, 0, k, true); break;
     case 'krag': wall(-2, 0, k, -1); beam(-2, 2); break;
     case 'ueberstand': beam(-2, 2.6); tri(-2, 0, k); tri(1.2, 0, k, true); break;
@@ -3879,9 +3888,19 @@ function statikItems(id, s, color) {
     case 'gerber': beam(-3, 3); tri(-3, 0, k); tri(-1, 0, k, true); tri(3, 0, k, true); hinge(0.8, 0, 0.09); break;
     case 'F': arr(0, -1.4, 0, 0, thick, 1); break;
     case 'Fh': arr(-1.4, 0, 0, 0, thick, 1); break;
+    case 'FhL': arr(1.4, 0, 0, 0, thick, 1); break;
     case 'q': dist(-2, 2, () => 0.7); break;
     case 'dreieck': dist(-2, 2, x => 0.05 + 0.95 * (x + 2) / 4); break;
     case 'trapez': dist(-2, 2, x => 0.45 + 0.5 * (x + 2) / 4); break;
+    case 'dreieckL': dist(-2, 2, x => 0.05 + 0.95 * (2 - x) / 4); break;
+    case 'trapezL': dist(-2, 2, x => 0.45 + 0.5 * (2 - x) / 4); break;
+    case 'durch': {
+      // alle Auflager als Festlager; Feldlänge in Stempel-Einheiten
+      const { n, L } = durchCfg(), fl = opt.fl ?? Math.max(1.2, L * 72 / 2.54 / s), x0 = -n * fl / 2;
+      beam(x0, x0 + n * fl); tri(x0, 0, k);
+      for (let i = 1; i <= n; i++) tri(x0 + i * fl, 0, k);
+      break;
+    }
     case 'Mr': moment(true); break;
     case 'Ml': moment(false); break;
     case 'zweigelenk': case 'dreigelenk': {
@@ -4161,7 +4180,21 @@ function buildStatikPop() {
   fill($('#statikSupports'), STATIK_SUPPORTS, 58, 40);
   fill($('#statikSystems'), STATIK_SYSTEMS, 110, 46);
   fill($('#statikLoads'), STATIK_LOADS, 80, 44);
+  buildDurch();
 }
+function buildDurch() {
+  const { n, L } = durchCfg(), box = $('#statikDurch'); box.innerHTML = '';
+  const b = document.createElement('button'); b.dataset.stamp = 's:durch'; b.title = `Durchlaufträger, ${n} ${n === 1 ? 'Feld' : 'Felder'}`;
+  b.appendChild(statikThumb(statikItems('durch', 20, '#1b1f24', { fl: 2 }), 150, 40));
+  const l = document.createElement('span'); l.textContent = `${n} ${n === 1 ? 'Feld' : 'Felder'} à ${String(L).replace('.', ',')} cm`; b.appendChild(l);
+  b.classList.toggle('active', prefs.stamp === 's:durch');
+  box.appendChild(b);
+  $('#durchN').value = n; $('#durchL').value = L;
+}
+for (const id of ['durchN', 'durchL']) $('#' + id).addEventListener('change', () => {
+  prefs.durch = { n: +$('#durchN').value, L: +$('#durchL').value }; prefs.durch = durchCfg();
+  prefs.stamp = 's:durch'; savePrefs(); buildDurch(); updToolbar();
+});
 function buildStahlPop() {
   const box = $('#stahlGrid'); box.innerHTML = '';
   for (const st of STAHL_PROFILES) {
@@ -5266,7 +5299,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 77;
+const APP_VERSION = 78;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5448,6 +5481,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.2': ['Statik-Stempel: Normalkraftgelenk und Querkraftgelenk (bei den Auflagern)', 'Statik-Stempel: Horizontallast, Dreiecks- und Trapezlast jetzt auch gespiegelt (links höchster Punkt bzw. Pfeil nach links)', 'Statik-Stempel: Durchlaufträger mit frei wählbarer Feldanzahl (1–10) und Feldlänge in cm'],
   '6.1': ['Stift: meldet das Tablet das Abheben nicht, wird nicht mehr neben der schwebenden Spitze weitergezeichnet', 'Stift: bewegt sich die Seite während des Schreibens, bleibt der Strich trotzdem genau unter der Spitze'],
   '6.0': ['Ecken einzeln runden: Rechteck oder Vieleck mit dem Lasso markieren → „Ecken runden“ → Ecke antippen → außen oder innen rund mit eigenem Radius (wie Abrunden im CAD)', 'Lasso und Stift: leichtes Aufdrücken schaltet nicht mehr versehentlich auf Radierer und macht keine dicken Kleckse mehr; der Handballen verschiebt oder malt beim Schreiben nichts mehr; hängende Auswahl reagiert wieder', 'Stift zeichnet auch über einem mit dem Finger angetippten Bild, statt es zu verschieben'],
   '5.9': ['Bemaßung: Mittelpunkt eines Kreises, Bogens oder einer Eckrundung antippen – der Radius wird bemaßt (R …); danach ziehen dreht ihn um den Mittelpunkt', 'Formen: neuer Knopf „Ecken“ – spitz, außen rund oder innen rund mit frei wählbarem Radius (mm); auch für schon gezeichnete Formen im Stil-Menü'],
