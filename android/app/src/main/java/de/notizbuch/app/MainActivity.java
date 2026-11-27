@@ -531,6 +531,37 @@ public class MainActivity extends ComponentActivity {
             });
         }
 
+        /** PDF über das Android-Teilen-Menü weitergeben (z. B. Nextcloud „Hochladen“). Die Datei liegt im Cache. */
+        @JavascriptInterface
+        public void shareFile(int id, String name, String mime, String b64) {
+            io.execute(() -> {
+                try {
+                    java.io.File dir = new java.io.File(getCacheDir(), "share");
+                    if (!dir.isDirectory() && !dir.mkdirs()) throw new java.io.IOException("Zwischenablage-Ordner fehlt");
+                    // alte geteilte Dateien (älter als 1 Tag) aufräumen – neuere evtl. noch beim Hochladen
+                    java.io.File[] old = dir.listFiles();
+                    if (old != null) for (java.io.File f : old) if (System.currentTimeMillis() - f.lastModified() > 86400000L) f.delete();
+                    String safe = (name == null || name.isEmpty() ? "Notiz.pdf" : name).replaceAll("[\\\\/:*?\"<>|]", "-");
+                    java.io.File f = new java.io.File(dir, safe);
+                    try (java.io.FileOutputStream o = new java.io.FileOutputStream(f)) { o.write(Base64.decode(b64, Base64.DEFAULT)); }
+                    Uri u = androidx.core.content.FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".share", f);
+                    Intent s = new Intent(Intent.ACTION_SEND);
+                    s.setType(mime == null || mime.isEmpty() ? "application/pdf" : mime);
+                    s.putExtra(Intent.EXTRA_STREAM, u);
+                    s.putExtra(Intent.EXTRA_TITLE, safe);
+                    s.setClipData(android.content.ClipData.newRawUri(safe, u));
+                    s.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent chooser = Intent.createChooser(s, "PDF teilen");
+                    runOnUiThread(() -> {
+                        try { startActivity(chooser); done(id, new JSONObject()); }
+                        catch (Exception e) { fail(id, "Error", e.getMessage()); }
+                    });
+                } catch (Exception e) {
+                    fail(id, "Error", e.getMessage());
+                }
+            });
+        }
+
         @JavascriptInterface
         public void deleteUri(int id, String uri) {
             io.execute(() -> {

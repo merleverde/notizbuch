@@ -1789,15 +1789,29 @@ function dialogChoice(dlg, key) {
    Hineinschreiben ändert nur die Kopie auf dem Tablet – hochgeladen wird zuverlässig nur über die Nextcloud-Dateiauswahl. */
 const isCloud = h => !!(h && h.native && /^content:\/\/[^/]*(nextcloud|owncloud)/i.test(h.uri || ''));
 const cloudCopy = h => isCloud(h) && !/^content:\/\/[^/]+\/(document|tree)\//i.test(h.uri);
+/* „PDF teilen“: geht über das Teilen-Menü an andere Apps – in Nextcloud „Hochladen“ wählen.
+   Unabhängig von der Dateiauswahl (die bei manchen Nextcloud-Problemen scheitert). */
+async function sharePdf() {
+  commitText();
+  if (!window.shareBytes) return toast('Teilen gibt es nur in der Android-App. Hier „Speichern unter …“ benutzen.', 5000);
+  try {
+    toast('PDF wird erstellt …', 1500);
+    const bytes = await buildPdf().then(checkPdf);
+    await window.shareBytes(pdfName(), bytes);
+    if (!prefs.shareHint) { prefs.shareHint = true; savePrefs(); setTimeout(() => toast('Für Nextcloud im Teilen-Menü „Nextcloud“ bzw. „Hochladen“ antippen und den Ordner wählen.', 6000), 800); }
+  } catch (e) { toast('Teilen fehlgeschlagen: ' + e.message, 6000); }
+}
 async function permFix(kind) {
   const name = S.handle?.name || pdfName();
   if (kind === 'stale') $('#permMsg').textContent = `Die Nextcloud-App kennt „${name}“ unter der gespeicherten Verknüpfung nicht mehr – sie hat ihre interne Dateiliste neu aufgebaut, oder die Datei wurde in Nextcloud umbenannt oder verschoben. Deine Notiz ist sicher in der App gespeichert. ` +
-    `So geht's: Nextcloud-App öffnen, den Ordner mit der Datei öffnen und die Liste einmal nach unten ziehen (aktualisieren). Dann hier „Original auswählen …“ tippen und die Datei links über „Nextcloud“ wählen – oder „Als neue Datei …“.`;
+    `So geht's: Nextcloud-App öffnen, den Ordner mit der Datei öffnen und die Liste einmal nach unten ziehen (aktualisieren). Dann hier „Original auswählen …“ tippen und die Datei links über „Nextcloud“ wählen. Klappt das nicht: „Teilen …“ → „Nextcloud“ hochladen – das geht immer.`;
   else if (cloudCopy(S.handle)) $('#permMsg').textContent = `„${name}“ wurde über „Öffnen mit“ aus der Nextcloud-App geöffnet. Dabei landet eine Änderung nur in der Zwischenkopie der Nextcloud-App auf dem Tablet und wird nicht zuverlässig hochgeladen. Deine Notiz ist sicher in der App gespeichert. ` +
     `Tippe auf „Original auswählen …“, wähle in der Dateiauswahl links „Nextcloud“ und dort dieselbe Datei – danach speichert die App direkt in die Nextcloud.`;
   else $('#permMsg').textContent = `Die App darf „${name}“ gerade nicht mehr überschreiben. Das passiert bei Dateien, die über „Öffnen mit“ aus einer anderen App (z. B. Nextcloud) kamen, sobald die Notizbuch-App neu gestartet oder aktualisiert wurde. Deine Notiz ist sicher in der App gespeichert. ` +
     `Tippe auf „Original auswählen …“ und wähle dieselbe Datei noch einmal aus – danach speichert die App dauerhaft direkt hinein.`;
+  $('#permShare').hidden = !window.shareBytes;
   const choice = await dialogChoice($('#permDlg'), 'p');
+  if (choice === 'share') return sharePdf();
   if (choice === 'new') return saveToFile(true, name);
   if (choice !== 'pick') return false;
   let h;
@@ -4726,6 +4740,7 @@ $('#menuPop').addEventListener('click', async e => {
   else if (m === 'mark') toggleMark();
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
+  else if (m === 'share') sharePdf();
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
   else if (m === 'penTest') { penLog.length = 0; $('#penLog').textContent = 'Warte auf Stift …'; $('#penTest').hidden = false; penTestOn = true; }
 });
@@ -5468,7 +5483,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 85;
+const APP_VERSION = 86;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5650,6 +5665,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.9': ['Neu: „PDF teilen …“ (Menü ⋮) – die PDF über das Android-Teilen-Menü z. B. mit „Nextcloud → Hochladen“ in einen Ordner legen. Funktioniert auch, wenn das Speichern in Nextcloud über die Dateiauswahl scheitert'],
   '6.8': ['Speichern: Kennt die Nextcloud-App die Datei nicht mehr („No file in database …“), erklärt die App jetzt, was zu tun ist, und bietet an, die Datei neu auszuwählen oder als neue Datei zu speichern'],
   '6.7': ['Bemaßung: waagrecht ↔, senkrecht ↕ und Winkel ∠ jetzt als eigene Knöpfe direkt neben „Bemaßung“ (nochmal antippen = normal)'],
   '6.6': ['Bemaßung: Beim seitlichen Verschieben rastet die Maßlinie auf der Linie anderer paralleler Maße ein (pinke Hilfslinie) – so liegen Maßketten genau in einer Flucht', 'Bemaßung nur waagrecht oder nur senkrecht (Maßstab-Menü „1:50 ▾“ → Richtung): bei versetzten Punkten wird nur der Abstand in dieser Achse gemessen. Nochmal antippen = wieder normal', 'Winkelbemaßung (Maßstab-Menü → ∠ Winkel): zwei Linien nacheinander antippen, dann den Bogen mit dem Stift an die gewünschte Stelle ziehen'],
