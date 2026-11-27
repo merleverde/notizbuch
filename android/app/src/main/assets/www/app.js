@@ -1767,8 +1767,11 @@ let saving = null;
 function saveToFile(pickNew = false, suggest = null) {
   if (saving) return saving.then(() => pickNew ? saveToFile(true, suggest) : !S.fileDirty || saveToFile(false));
   saving = doSave(pickNew, suggest).finally(() => { saving = null; });
-  return saving.then(r => r === 'perm' ? permFix() : r);
+  return saving.then(r => r === 'perm' || r === 'stale' ? permFix(r) : r);
 }
+// Verknüpfung ungültig: der Speicherort kennt die Datei unter dieser Kennung nicht mehr
+// (Nextcloud: „No file in database for documentId“ – z. B. nach Neuaufbau ihrer Dateiliste, Umbenennen oder Verschieben)
+const isStaleErr = e => /no file in database|filenotfound|file not found|no such file|does not exist|existiert nicht|nicht gefunden|unknown document|missing file/i.test(String(e && e.message));
 const isPermErr = e => e?.name === 'NotAllowedError' || /permission denial|securityexception|not exported|permission/i.test(String(e && e.message));
 /* Dialog mit Knöpfen data-<key>="…" öffnen; liefert den Wert des gewählten Knopfs ('cancel' bei Zurück) */
 function dialogChoice(dlg, key) {
@@ -1786,9 +1789,11 @@ function dialogChoice(dlg, key) {
    Hineinschreiben ändert nur die Kopie auf dem Tablet – hochgeladen wird zuverlässig nur über die Nextcloud-Dateiauswahl. */
 const isCloud = h => !!(h && h.native && /^content:\/\/[^/]*(nextcloud|owncloud)/i.test(h.uri || ''));
 const cloudCopy = h => isCloud(h) && !/^content:\/\/[^/]+\/(document|tree)\//i.test(h.uri);
-async function permFix() {
+async function permFix(kind) {
   const name = S.handle?.name || pdfName();
-  if (cloudCopy(S.handle)) $('#permMsg').textContent = `„${name}“ wurde über „Öffnen mit“ aus der Nextcloud-App geöffnet. Dabei landet eine Änderung nur in der Zwischenkopie der Nextcloud-App auf dem Tablet und wird nicht zuverlässig hochgeladen. Deine Notiz ist sicher in der App gespeichert. ` +
+  if (kind === 'stale') $('#permMsg').textContent = `Die Nextcloud-App kennt „${name}“ unter der gespeicherten Verknüpfung nicht mehr – sie hat ihre interne Dateiliste neu aufgebaut, oder die Datei wurde in Nextcloud umbenannt oder verschoben. Deine Notiz ist sicher in der App gespeichert. ` +
+    `So geht's: Nextcloud-App öffnen, den Ordner mit der Datei öffnen und die Liste einmal nach unten ziehen (aktualisieren). Dann hier „Original auswählen …“ tippen und die Datei links über „Nextcloud“ wählen – oder „Als neue Datei …“.`;
+  else if (cloudCopy(S.handle)) $('#permMsg').textContent = `„${name}“ wurde über „Öffnen mit“ aus der Nextcloud-App geöffnet. Dabei landet eine Änderung nur in der Zwischenkopie der Nextcloud-App auf dem Tablet und wird nicht zuverlässig hochgeladen. Deine Notiz ist sicher in der App gespeichert. ` +
     `Tippe auf „Original auswählen …“, wähle in der Dateiauswahl links „Nextcloud“ und dort dieselbe Datei – danach speichert die App direkt in die Nextcloud.`;
   else $('#permMsg').textContent = `Die App darf „${name}“ gerade nicht mehr überschreiben. Das passiert bei Dateien, die über „Öffnen mit“ aus einer anderen App (z. B. Nextcloud) kamen, sobald die Notizbuch-App neu gestartet oder aktualisiert wurde. Deine Notiz ist sicher in der App gespeichert. ` +
     `Tippe auf „Original auswählen …“ und wähle dieselbe Datei noch einmal aus – danach speichert die App dauerhaft direkt hinein.`;
@@ -1799,7 +1804,7 @@ async function permFix() {
   try { [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF-Dokument', accept: { 'application/pdf': ['.pdf'], 'application/octet-stream': ['.pdf'] } }] }); }
   catch { return false; }
   if (cloudCopy(h)) { toast('Bitte die Datei in der Dateiauswahl über den Eintrag „Nextcloud“ wählen (nicht über „Zuletzt“ oder die Nextcloud-App).', 7000); return false; }
-  if (h.name !== name) { toast(`Du hast „${h.name}“ gewählt, nicht „${name}“. Zum Überschreiben bitte genau die Originaldatei wählen.`, 7000); return false; }
+  if (h.name !== name && kind !== 'stale') { toast(`Du hast „${h.name}“ gewählt, nicht „${name}“. Zum Überschreiben bitte genau die Originaldatei wählen.`, 7000); return false; }
   if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') { toast('Diese Datei darf die App nur lesen. Wähle „Als neue Datei …“.', 6000); return false; }
   S.handle = h; await dbPut('handles', { id: S.note.id, handle: h });
   return saveToFile(false);
@@ -1868,6 +1873,7 @@ async function doSave(pickNew, suggest) {
     if (created) { try { await created.remove?.(); } catch {} }
     // Schreiberlaubnis für die Originaldatei abgelaufen (typisch nach „Öffnen mit“ aus Nextcloud + App-Neustart):
     // nicht als Fehler melden, sondern anbieten, die Datei neu auszuwählen (siehe permFix)
+    if (!created && h && h === S.handle && isStaleErr(e)) return 'stale';
     if (!created && h && h === S.handle && isPermErr(e)) return 'perm';
     if (e.name !== 'AbortError') toast('Speichern fehlgeschlagen: ' + e.message + (created ? ' Falls eine leere Datei entstanden ist, kannst du sie löschen.' : ''), 8000);
     return false;
@@ -5462,7 +5468,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 84;
+const APP_VERSION = 85;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5644,6 +5650,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.8': ['Speichern: Kennt die Nextcloud-App die Datei nicht mehr („No file in database …“), erklärt die App jetzt, was zu tun ist, und bietet an, die Datei neu auszuwählen oder als neue Datei zu speichern'],
   '6.7': ['Bemaßung: waagrecht ↔, senkrecht ↕ und Winkel ∠ jetzt als eigene Knöpfe direkt neben „Bemaßung“ (nochmal antippen = normal)'],
   '6.6': ['Bemaßung: Beim seitlichen Verschieben rastet die Maßlinie auf der Linie anderer paralleler Maße ein (pinke Hilfslinie) – so liegen Maßketten genau in einer Flucht', 'Bemaßung nur waagrecht oder nur senkrecht (Maßstab-Menü „1:50 ▾“ → Richtung): bei versetzten Punkten wird nur der Abstand in dieser Achse gemessen. Nochmal antippen = wieder normal', 'Winkelbemaßung (Maßstab-Menü → ∠ Winkel): zwei Linien nacheinander antippen, dann den Bogen mit dem Stift an die gewünschte Stelle ziehen'],
   '6.5': ['Ordner wie im Explorer: in einem Ordner siehst du nur seine eigenen Notizen; Unterordner erscheinen als Ordner-Kacheln und zeigen ihren Inhalt erst beim Öffnen. Die Suche findet weiterhin auch in Unterordnern'],
