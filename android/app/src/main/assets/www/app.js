@@ -2640,8 +2640,10 @@ function moveAct(e) {
   else if (t === 'lasso') {
     act.poly.push([x, y]);
     ctx.clearRect(0, 0, act.p.w, act.p.h);
-    ctx.save(); ctx.setLineDash([5 / act.k, 4 / act.k]); ctx.strokeStyle = '#2f5d50'; ctx.lineWidth = 1.5 / act.k;
-    ctx.fillStyle = 'rgba(47,93,80,.06)'; ctx.beginPath();
+    const touch = lassoTouch(act.poly);
+    // violett = nur vollständig Umfahrenes (im Uhrzeigersinn), gelb = alles Berührte (gegen den Uhrzeigersinn)
+    ctx.save(); ctx.setLineDash([6 / act.k, 4 / act.k]); ctx.strokeStyle = touch ? '#e0a800' : '#8a3ffc'; ctx.lineWidth = 2.5 / act.k;
+    ctx.fillStyle = touch ? 'rgba(255,200,0,.16)' : 'rgba(138,63,252,.10)'; ctx.beginPath();
     act.poly.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b));
     ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
   } else if (t === 'shape' && act.cmp) {
@@ -2971,15 +2973,42 @@ function pasteClip(p = currentPage(), x, y) {
   setTool('lasso'); refreshPage(p); commit(p, before);
   setSel({ p, ids: new Set(items.map(i => i.id)) });
 }
+// Drehsinn des Lassos auf dem Bildschirm (y nach unten): > 0 = im Uhrzeigersinn
+function polyTurn(poly) {
+  let a = 0; for (let i = 0, n = poly.length; i < n; i++) { const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % n]; a += x1 * y2 - x2 * y1; }
+  return a;
+}
+const lassoTouch = poly => poly.length > 2 && polyTurn(poly) < 0;
+function segsCross(ax, ay, bx, by, cx, cy, dx, dy) {
+  const d = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx); if (!d) return false;
+  const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / d, u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / d;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
 function selectPoly(p, poly) {
-  const ids = new Set();
+  const ids = new Set(), touch = lassoTouch(poly), pb = unionBox([{ x: Math.min(...poly.map(q => q[0])), y: Math.min(...poly.map(q => q[1])), w: 0, h: 0 }, { x: Math.max(...poly.map(q => q[0])), y: Math.max(...poly.map(q => q[1])), w: 0, h: 0 }]);
   for (const it of p.items) {
-    // nur Objekte, die VOLLSTÄNDIG im Lasso liegen
-    let pts;
+    let pts, closed = false;
     if (it.t === 'stroke') pts = it.pts;
     else if (it.t === 'shape' && ['rect', 'ellipse', 'poly', 'line', 'arrow', 'dim'].includes(it.kind)) pts = shapeOutline(it);
-    else { const b = bbox(it); pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]; }
-    if (pts.length && pts.every(([x, y]) => inPoly(x, y, poly))) ids.add(it.id);
+    else { const b = bbox(it); pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]]; closed = true; }
+    if (!pts.length) continue;
+    if (!touch) { if (pts.every(([x, y]) => inPoly(x, y, poly))) ids.add(it.id); continue; }
+    // gegen den Uhrzeigersinn: alles, was das Lasso berührt (ein Punkt innen oder eine Linie kreuzt das Lasso)
+    const b = bbox(it);
+    if (b.x > pb.x + pb.w || b.y > pb.y + pb.h || b.x + b.w < pb.x || b.y + b.h < pb.y) continue;
+    let hit = pts.some(([x, y]) => inPoly(x, y, poly));
+    if (!hit && closed) hit = inPoly(poly[0][0], poly[0][1], pts);                     // Lasso ganz im Bild/Text
+    if (!hit) {
+      const segs = closed ? [...pts, pts[0]] : pts;
+      outer: for (let i = 1; i < segs.length; i++) {
+        const [ax, ay] = segs[i - 1], [bx, by] = segs[i];
+        for (let j = 0, n = poly.length; j < n; j++) {
+          const [cx, cy] = poly[j], [dx, dy] = poly[(j + 1) % n];
+          if (segsCross(ax, ay, bx, by, cx, cy, dx, dy)) { hit = true; break outer; }
+        }
+      }
+    }
+    if (hit) ids.add(it.id);
   }
   setSel(ids.size ? { p, ids } : null);
 }
@@ -5310,7 +5339,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 79;
+const APP_VERSION = 80;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5434,7 +5463,7 @@ const TUTORIAL = [
     <li><b>Abdecken</b>: übermalt mit Papierweiß – auch Schrift aus anderen Apps in einer PDF.</li>
     <li>Tippst du nach dem Radieren eine Farbe an, bist du sofort wieder beim letzten Stift.</li></ul>` },
   { t: 'Lasso: auswählen und bearbeiten', i: '[data-tool="lasso"]', h: `<ul>
-    <li>Um Objekte herumfahren – markiert wird nur, was <b>vollständig</b> im Lasso liegt. Einzelnes Antippen markiert ein Objekt.</li>
+    <li>Um Objekte herumfahren: <b>im Uhrzeigersinn</b> wird nur markiert, was <b>vollständig</b> im Lasso liegt (<b>violett</b>). <b>Gegen den Uhrzeigersinn</b> wird alles markiert, was das Lasso <b>berührt</b> (<b>gelb</b>). Einzelnes Antippen markiert ein Objekt.</li>
     <li><b>Griffe</b>: Ecken = Größe (Seitenverhältnis bleibt), Seiten = nur Breite oder Höhe, oberer Kreis = drehen. Bei Linien und Pfeilen ziehst du direkt die Enden.</li>
     <li><b>Verschieben</b>, auch auf eine andere Seite – am Rand scrollt es mit. Dabei erscheinen kurz <b>Hilfslinien</b> (pink), wenn eine Kante oder Mitte auf einer Linie mit einem anderen Objekt oder der Seitenmitte liegt – das Objekt rastet dort ein. Abschaltbar im Menü ⋮.</li>
     <li><b>Ausrichten</b> (in der Leiste): mehrere markierte Objekte links, mittig, rechts, oben oder unten aneinander ausrichten oder gleichmäßig verteilen. Ein einzelnes Objekt wird an der Seite ausgerichtet.</li>
@@ -5492,6 +5521,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.4': ['Lasso: im Uhrzeigersinn wird nur markiert, was ganz im Lasso liegt (violett); gegen den Uhrzeigersinn alles, was das Lasso berührt (gelb)'],
   '6.3': ['Statik-Stempel: Feldlänge (cm) gilt jetzt für alle statischen Systeme, den Durchlaufträger, die Rahmen und die Streckenlasten – Lasten passen so genau auf ein Feld. Feld leer lassen = wächst wie früher mit dem Größenregler'],
   '6.2': ['Statik-Stempel: Normalkraftgelenk und Querkraftgelenk (bei den Auflagern)', 'Statik-Stempel: Horizontallast, Dreiecks- und Trapezlast jetzt auch gespiegelt (links höchster Punkt bzw. Pfeil nach links)', 'Statik-Stempel: Durchlaufträger mit frei wählbarer Feldanzahl (1–10) und Feldlänge in cm'],
   '6.1': ['Stift: meldet das Tablet das Abheben nicht, wird nicht mehr neben der schwebenden Spitze weitergezeichnet', 'Stift: bewegt sich die Seite während des Schreibens, bleibt der Strich trotzdem genau unter der Spitze'],
