@@ -3828,7 +3828,10 @@ const STATIK_LOADS = [
   { id: 'Mr', title: 'Moment rechtsdrehend' }, { id: 'Ml', title: 'Moment linksdrehend' }
 ];
 // Durchlaufträger: Feldanzahl und Feldlänge (cm auf dem Papier) frei wählbar
-const durchCfg = () => { const d = prefs.durch || {}; return { n: clamp(Math.round(+d.n || 3), 1, 10), L: clamp(+d.L || 3, 0.5, 50) }; };
+// Feldlänge (cm auf dem Papier) gilt für alle Balkensysteme, den Durchlaufträger und die Streckenlasten; null = wächst mit der Stempelgröße
+if (prefs.span === undefined) prefs.span = prefs.durch?.L || 3;
+const durchCfg = () => { const d = prefs.durch || {}; return { n: clamp(Math.round(+d.n || 3), 1, 10), L: prefs.span ? clamp(+prefs.span, 0.5, 50) : null }; };
+const spanUnits = s => prefs.span ? Math.max(1.2, clamp(+prefs.span, 0.5, 50) * 72 / 2.54 / s) : null;
 function statikItems(id, s, color, opt = {}) {
   const thin = Math.max(1, s * 0.04), thick = Math.max(1.6, s * 0.08), out = [], late = [];
   // Bei Balkensystemen sitzt das Lager direkt am Balken – ein Kreis dort sähe aus wie ein Momentengelenk im Balken
@@ -3857,7 +3860,7 @@ function statikItems(id, s, color, opt = {}) {
   const dist = (xa, xb, h) => {
     L([[xa, -h(xa)], [xb, -h(xb)]]);
     if (h(xa) > 0.05) L([[xa, -h(xa)], [xa, 0]]);
-    const n = 8;
+    const n = Math.max(8, Math.round((xb - xa) / 0.5));
     for (let i = 0; i <= n; i++) { const x = xa + (xb - xa) * i / n, hh = h(x); if (hh > 0.2) arr(x, -hh, x, 0); }
   };
   const moment = cw => {
@@ -3869,6 +3872,8 @@ function statikItems(id, s, color, opt = {}) {
     late.push({ t: 'shape', id: uid(), kind: 'ellipse', x1: -0.05 * s, y1: -0.05 * s, x2: 0.05 * s, y2: 0.05 * s, color, size: thin, fill: color, fillMode: 2 });
   };
   const k = 0.75;
+  // Streckung: das Referenzfeld (ref Einheiten) wird genau so lang wie die eingestellte Feldlänge; Auflager behalten ihre Größe
+  const Lu = opt.thumb ? null : spanUnits(s), F = ref => Lu ? Lu / ref : 1;
   switch (id) {
     case 'fest': tri(0, 0, 1, false); break;
     case 'los': tri(0, 0, 1, true); break;
@@ -3879,24 +3884,25 @@ function statikItems(id, s, color, opt = {}) {
     case 'ngelenk': beam(-0.9, -0.06); beam(0.06, 0.9); L([[-0.35, -0.22], [0.35, -0.22]], thick); L([[-0.35, 0.22], [0.35, 0.22]], thick); break;
     // Querkraftgelenk (V = 0): zwei Linien quer zur Achse – Parallelführung, verschieblich quer zum Balken
     case 'qgelenk': beam(-0.9, -0.09); beam(0.09, 0.9); L([[-0.09, -0.3], [-0.09, 0.3]], thick); L([[0.09, -0.3], [0.09, 0.3]], thick); break;
-    case 'einfeld': beam(-2, 2); tri(-2, 0, k); tri(2, 0, k, true); break;
-    case 'krag': wall(-2, 0, k, -1); beam(-2, 2); break;
-    case 'ueberstand': beam(-2, 2.6); tri(-2, 0, k); tri(1.2, 0, k, true); break;
-    case 'zweifeld': beam(-2.5, 2.5); tri(-2.5, 0, k); tri(0, 0, k, true); tri(2.5, 0, k, true); break;
-    case 'einsplos': wall(-2, 0, k, -1); beam(-2, 2); tri(2, 0, k, true); break;
-    case 'beids': wall(-2, 0, k, -1); wall(2, 0, k, 1); beam(-2, 2); break;
-    case 'gerber': beam(-3, 3); tri(-3, 0, k); tri(-1, 0, k, true); tri(3, 0, k, true); hinge(0.8, 0, 0.09); break;
+    case 'einfeld': { const f = F(4); beam(-2 * f, 2 * f); tri(-2 * f, 0, k); tri(2 * f, 0, k, true); break; }
+    case 'krag': { const f = F(4); wall(-2 * f, 0, k, -1); beam(-2 * f, 2 * f); break; }
+    case 'ueberstand': { const f = F(3.2); beam(-2 * f, 2.6 * f); tri(-2 * f, 0, k); tri(1.2 * f, 0, k, true); break; }
+    case 'zweifeld': { const f = F(2.5); beam(-2.5 * f, 2.5 * f); tri(-2.5 * f, 0, k); tri(0, 0, k, true); tri(2.5 * f, 0, k, true); break; }
+    case 'einsplos': { const f = F(4); wall(-2 * f, 0, k, -1); beam(-2 * f, 2 * f); tri(2 * f, 0, k, true); break; }
+    case 'beids': { const f = F(4); wall(-2 * f, 0, k, -1); wall(2 * f, 0, k, 1); beam(-2 * f, 2 * f); break; }
+    case 'gerber': { const f = F(4); beam(-3 * f, 3 * f); tri(-3 * f, 0, k); tri(-1 * f, 0, k, true); tri(3 * f, 0, k, true); hinge(0.8 * f, 0, 0.09); break; }
     case 'F': arr(0, -1.4, 0, 0, thick, 1); break;
     case 'Fh': arr(-1.4, 0, 0, 0, thick, 1); break;
     case 'FhL': arr(1.4, 0, 0, 0, thick, 1); break;
-    case 'q': dist(-2, 2, () => 0.7); break;
-    case 'dreieck': dist(-2, 2, x => 0.05 + 0.95 * (x + 2) / 4); break;
-    case 'trapez': dist(-2, 2, x => 0.45 + 0.5 * (x + 2) / 4); break;
-    case 'dreieckL': dist(-2, 2, x => 0.05 + 0.95 * (2 - x) / 4); break;
-    case 'trapezL': dist(-2, 2, x => 0.45 + 0.5 * (2 - x) / 4); break;
+    // Streckenlasten: so lang wie ein Feld (Feldlänge)
+    case 'q': case 'dreieck': case 'trapez': case 'dreieckL': case 'trapezL': {
+      const a = 2 * F(4), t = x => (x + a) / (2 * a);
+      const h = { q: () => 0.7, dreieck: x => 0.05 + 0.95 * t(x), trapez: x => 0.45 + 0.5 * t(x), dreieckL: x => 0.05 + 0.95 * (1 - t(x)), trapezL: x => 0.45 + 0.5 * (1 - t(x)) }[id];
+      dist(-a, a, h); break;
+    }
     case 'durch': {
       // alle Auflager als Festlager; Feldlänge in Stempel-Einheiten
-      const { n, L } = durchCfg(), fl = opt.fl ?? Math.max(1.2, L * 72 / 2.54 / s), x0 = -n * fl / 2;
+      const { n } = durchCfg(), fl = opt.fl ?? Lu ?? 4, x0 = -n * fl / 2;
       beam(x0, x0 + n * fl); tri(x0, 0, k);
       for (let i = 1; i <= n; i++) tri(x0 + i * fl, 0, k);
       break;
@@ -3904,9 +3910,10 @@ function statikItems(id, s, color, opt = {}) {
     case 'Mr': moment(true); break;
     case 'Ml': moment(false); break;
     case 'zweigelenk': case 'dreigelenk': {
-      const top = -1.1, bot = 0.9;
-      L([[-1.8, bot], [-1.8, top], [1.8, top], [1.8, bot]], thick);
-      tri(-1.8, bot, k); tri(1.8, bot, k);
+      // Rahmen: Breite = Feldlänge, Höhe wächst im gleichen Verhältnis mit
+      const f = F(3.6), top = -1.1 * f, bot = 0.9 * f, w = 1.8 * f;
+      L([[-w, bot], [-w, top], [w, top], [w, bot]], thick);
+      tri(-w, bot, k); tri(w, bot, k);
       if (id === 'dreigelenk') hinge(0, top, 0.09);
       break;
     }
@@ -4171,7 +4178,7 @@ function buildStatikPop() {
     box.innerHTML = '';
     for (const st of list) {
       const b = document.createElement('button'); b.dataset.stamp = 's:' + st.id; b.title = st.title;
-      b.appendChild(statikThumb(statikItems(st.id, 20, '#1b1f24'), w, h));
+      b.appendChild(statikThumb(statikItems(st.id, 20, '#1b1f24', { thumb: true }), w, h));
       const l = document.createElement('span'); l.textContent = st.title; b.appendChild(l);
       b.classList.toggle('active', prefs.stamp === 's:' + st.id);
       box.appendChild(b);
@@ -4185,15 +4192,19 @@ function buildStatikPop() {
 function buildDurch() {
   const { n, L } = durchCfg(), box = $('#statikDurch'); box.innerHTML = '';
   const b = document.createElement('button'); b.dataset.stamp = 's:durch'; b.title = `Durchlaufträger, ${n} ${n === 1 ? 'Feld' : 'Felder'}`;
-  b.appendChild(statikThumb(statikItems('durch', 20, '#1b1f24', { fl: 2 }), 150, 40));
-  const l = document.createElement('span'); l.textContent = `${n} ${n === 1 ? 'Feld' : 'Felder'} à ${String(L).replace('.', ',')} cm`; b.appendChild(l);
+  b.appendChild(statikThumb(statikItems('durch', 20, '#1b1f24', { fl: 2, thumb: true }), 150, 40));
+  const l = document.createElement('span'); l.textContent = `${n} ${n === 1 ? 'Feld' : 'Felder'}` + (L ? ` à ${String(L).replace('.', ',')} cm` : ''); b.appendChild(l);
   b.classList.toggle('active', prefs.stamp === 's:durch');
   box.appendChild(b);
-  $('#durchN').value = n; $('#durchL').value = L;
+  $('#durchN').value = n; $('#spanL').value = L ?? '';
 }
-for (const id of ['durchN', 'durchL']) $('#' + id).addEventListener('change', () => {
-  prefs.durch = { n: +$('#durchN').value, L: +$('#durchL').value }; prefs.durch = durchCfg();
+$('#durchN').addEventListener('change', () => {
+  prefs.durch = { n: +$('#durchN').value }; prefs.durch = { n: durchCfg().n };
   prefs.stamp = 's:durch'; savePrefs(); buildDurch(); updToolbar();
+});
+$('#spanL').addEventListener('change', () => {
+  const v = +String($('#spanL').value).replace(',', '.');
+  prefs.span = v > 0 ? clamp(v, 0.5, 50) : null; savePrefs(); buildDurch();
 });
 function buildStahlPop() {
   const box = $('#stahlGrid'); box.innerHTML = '';
@@ -5299,7 +5310,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 78;
+const APP_VERSION = 79;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5481,6 +5492,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.3': ['Statik-Stempel: Feldlänge (cm) gilt jetzt für alle statischen Systeme, den Durchlaufträger, die Rahmen und die Streckenlasten – Lasten passen so genau auf ein Feld. Feld leer lassen = wächst wie früher mit dem Größenregler'],
   '6.2': ['Statik-Stempel: Normalkraftgelenk und Querkraftgelenk (bei den Auflagern)', 'Statik-Stempel: Horizontallast, Dreiecks- und Trapezlast jetzt auch gespiegelt (links höchster Punkt bzw. Pfeil nach links)', 'Statik-Stempel: Durchlaufträger mit frei wählbarer Feldanzahl (1–10) und Feldlänge in cm'],
   '6.1': ['Stift: meldet das Tablet das Abheben nicht, wird nicht mehr neben der schwebenden Spitze weitergezeichnet', 'Stift: bewegt sich die Seite während des Schreibens, bleibt der Strich trotzdem genau unter der Spitze'],
   '6.0': ['Ecken einzeln runden: Rechteck oder Vieleck mit dem Lasso markieren → „Ecken runden“ → Ecke antippen → außen oder innen rund mit eigenem Radius (wie Abrunden im CAD)', 'Lasso und Stift: leichtes Aufdrücken schaltet nicht mehr versehentlich auf Radierer und macht keine dicken Kleckse mehr; der Handballen verschiebt oder malt beim Schreiben nichts mehr; hängende Auswahl reagiert wieder', 'Stift zeichnet auch über einem mit dem Finger angetippten Bild, statt es zu verschieben'],

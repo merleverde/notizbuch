@@ -631,3 +631,8 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 .durch-opts { display: flex; flex-direction: column; gap: 6px; font-size: .9rem; }
 .durch-opts label { display: flex; align-items: center; gap: 6px; }
 .durch-opts input { width: 64px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
+
+/* Statik: gemeinsame Feldlänge neben der Überschrift */
+.statik-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.span-opt { display: flex; align-items: center; gap: 6px; font-size: .9rem; }
+.span-opt input { width: 64px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
