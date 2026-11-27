@@ -300,7 +300,11 @@ function arrowHead(it) {
 const dimFs = it => it.fs || 11;
 function dimLabel(it) {
   if (it.text != null && it.text !== '') return it.text;
-  const mm = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) / 72 * 25.4 * (it.scale || 1);
+  if (it.ang) {
+    const deg = angGeom(it).sw * 180 / Math.PI, rd = Math.round(deg);
+    return (Math.abs(deg - rd) < 0.05 ? String(rd) : deg.toLocaleString('de-DE', { maximumFractionDigits: 1 })) + '°';
+  }
+  const mm = (it.rad ? Math.hypot(it.x2 - it.x1, it.y2 - it.y1) : dimDir(it)[2]) / 72 * 25.4 * (it.scale || 1);
   const u = it.unit ?? 'm', v = u === 'm' ? mm / 1000 : u === 'cm' ? mm / 10 : mm, dec = it.dec ?? 2;
   return (it.rad ? 'R ' : '') + v.toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (u ? ' ' + u : '');
 }
@@ -311,7 +315,15 @@ function radTextOut(it) {
   return est > len * 0.75 ? est : 0;
 }
 function dimTextPos(it, ax, ay, bx, by) {
-  let a = Math.atan2(it.y2 - it.y1, it.x2 - it.x1); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
+  if (it.ang) {
+    // Winkelzahl außen am Bogen, in Bogenrichtung, nie kopfüber
+    const { r, a0, sw } = angGeom(it), m = a0 + sw / 2, fs = dimFs(it), off = fs * 0.35 + it.size;
+    let a = m + Math.PI / 2; a = normA(a); if (a > Math.PI) a -= TAU; if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
+    const ux = Math.sin(a), uy = -Math.cos(a), rx = Math.cos(m), ry = Math.sin(m);
+    const rr = ux * rx + uy * ry > 0 ? r : r + 2 * off + fs;
+    return { a, mx: it.x1 + rx * rr, my: it.y1 + ry * rr, off };
+  }
+  let a = it.rad ? Math.atan2(it.y2 - it.y1, it.x2 - it.x1) : Math.atan2(dimDir(it)[1], dimDir(it)[0]); if (a > Math.PI / 2) a -= Math.PI; else if (a <= -Math.PI / 2) a += Math.PI;
   const est = radTextOut(it);
   if (est) {
     const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) || 1, d = len + dimFs(it) * 0.4 + est / 2;
@@ -336,13 +348,77 @@ async function pdfDim(out, pg, v, it) {
   v.cur = {};
   return true;
 }
+// [ux, uy, Länge]: bei waagrecht/senkrecht zählt nur der Abstand in x bzw. y (kein Schrägmaß bei versetzten Punkten)
+function dimDir(it) {
+  if (it.ortho === 'h') return [Math.sign(it.x2 - it.x1) || 1, 0, Math.abs(it.x2 - it.x1)];
+  if (it.ortho === 'v') return [0, Math.sign(it.y2 - it.y1) || 1, Math.abs(it.y2 - it.y1)];
+  const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1), l = len || 1;
+  return [(it.x2 - it.x1) / l, (it.y2 - it.y1) / l, len];
+}
+/* Winkelmaß: x1|y1 = Scheitel, x2|y2 = Punkt auf dem Maßbogen (bestimmt Radius und welcher der 4 Winkel),
+   t1/t2 = Richtungen der beiden Linien. Liefert Radius r, Startwinkel a0 und Öffnung sw. */
+const TAU = Math.PI * 2, normA = a => ((a % TAU) + TAU) % TAU;
+function angGeom(it) {
+  const r = Math.hypot(it.x2 - it.x1, it.y2 - it.y1), f = normA(Math.atan2(it.y2 - it.y1, it.x2 - it.x1));
+  const rays = [it.t1, it.t1 + Math.PI, it.t2, it.t2 + Math.PI].map(normA).sort((a, b) => a - b);
+  let a0 = rays[3], a1 = rays[0] + TAU;
+  for (let i = 0; i < 4; i++) { const b = i < 3 ? rays[i + 1] : rays[0] + TAU; if (f >= rays[i] && f < b) { a0 = rays[i]; a1 = b; break; } }
+  if (f < rays[0]) { a0 = rays[3] - TAU; a1 = rays[0]; }
+  return { r, a0, sw: a1 - a0 };
+}
+function drawAngDim(ctx, it, noText) {
+  const { x1: cx, y1: cy } = it, { r, a0, sw } = angGeom(it), fs = dimFs(it); if (r < 2 || sw < 1e-3) return;
+  const a1 = a0 + sw, al = Math.min(Math.max(6, fs * 0.7), r * sw * 0.35), w = al * 0.32, e = Math.max(5, fs * 0.6);
+  const P = (a, rr = r) => [cx + rr * Math.cos(a), cy + rr * Math.sin(a)];
+  ctx.save(); ctx.strokeStyle = ctx.fillStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round';
+  ctx.beginPath();
+  arcPts(cx, cy, r, a0, a1, Math.max(8, Math.ceil(sw / 0.08))).forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  for (const a of [a0, a1]) { const [x, y] = P(a, Math.max(0, r - e)), [u, v] = P(a, r + e * 0.6); ctx.moveTo(x, y); ctx.lineTo(u, v); }   // kurze Hilfslinien
+  ctx.stroke();
+  // Pfeilspitzen an beiden Bogenenden, nach außen zeigend
+  for (const [a, dir] of [[a0, 1], [a1, -1]]) {
+    const [x, y] = P(a), tx = -Math.sin(a) * dir, ty = Math.cos(a) * dir, rx = Math.cos(a), ry = Math.sin(a);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + tx * al + rx * w, y + ty * al + ry * w); ctx.lineTo(x + tx * al - rx * w, y + ty * al - ry * w); ctx.closePath(); ctx.fill();
+  }
+  if (!noText) {
+    const { a, mx, my, off } = dimTextPos(it);
+    ctx.translate(mx, my); ctx.rotate(a);
+    ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(dimLabel(it), 0, -off);
+  }
+  ctx.restore();
+}
 function dimPts(it) {
-  const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) || 1, nx = -(it.y2 - it.y1) / len, ny = (it.x2 - it.x1) / len, o = it.off || 0;
-  return { nx, ny, a: [it.x1 + nx * o, it.y1 + ny * o], b: [it.x2 + nx * o, it.y2 + ny * o] };
+  if (it.ang) return { nx: 0, ny: 0, a: [it.x1, it.y1], b: [it.x2, it.y2] };
+  const [ux, uy, len] = dimDir(it), nx = -uy, ny = ux, o = it.off || 0, a = [it.x1 + nx * o, it.y1 + ny * o];
+  return { nx, ny, a, b: [a[0] + ux * len, a[1] + uy * len] };
+}
+/* Maßlinie verschieben: rastet auf der Linie anderer, paralleler Maße ein (Maßkette in einer Flucht).
+   Liefert { off, o } mit dem neuen Abstand und dem Maß, an dem eingerastet wurde. */
+function snapDimOff(p, d, off, k) {
+  const [ux, uy] = dimDir(d), nx = -uy, ny = ux;
+  let best = null;
+  for (const o of p.items) {
+    if (o.id === d.id || o.t !== 'shape' || o.kind !== 'dim' || o.rad || o.ang) continue;
+    const [vx, vy, ol] = dimDir(o); if (ol < 1) continue;
+    if (Math.abs(vx * uy - vy * ux) > 0.02) continue;                                // nicht parallel
+    const { a } = dimPts(o), t = (a[0] - d.x1) * nx + (a[1] - d.y1) * ny, dd = Math.abs(t - off) * k;
+    if (dd < 12 && (!best || dd < best.dd)) best = { off: +t.toFixed(2), o, dd };
+  }
+  return best || { off };
+}
+// pinke Hilfslinie entlang der gemeinsamen Flucht beider Maße
+function drawDimSnap(ctx, d, o, k) {
+  const A = dimPts(d), B = dimPts(o), [ux, uy] = dimDir(d);
+  const ts = [A.a, A.b, B.a, B.b].map(q => (q[0] - A.a[0]) * ux + (q[1] - A.a[1]) * uy), t0 = Math.min(...ts) - 12 / k, t1 = Math.max(...ts) + 12 / k;
+  ctx.save(); ctx.strokeStyle = '#e83e8c'; ctx.lineWidth = 1.5 / k; ctx.setLineDash([6 / k, 4 / k]);
+  ctx.beginPath(); ctx.moveTo(A.a[0] + ux * t0, A.a[1] + uy * t0); ctx.lineTo(A.a[0] + ux * t1, A.a[1] + uy * t1); ctx.stroke(); ctx.restore();
 }
 function drawDim(ctx, it, noText) {
-  const { x1, y1, x2, y2 } = it, len = Math.hypot(x2 - x1, y2 - y1); if (len < 0.5) return;
-  const ux = (x2 - x1) / len, uy = (y2 - y1) / len, nx = -uy, ny = ux, fs = dimFs(it);
+  if (it.ang) return drawAngDim(ctx, it, noText);
+  const { x1, y1, x2, y2 } = it, rl = Math.hypot(x2 - x1, y2 - y1);
+  const [ux, uy, len] = it.rad ? [(x2 - x1) / (rl || 1), (y2 - y1) / (rl || 1), rl] : dimDir(it); if (len < 0.5) return;
+  const nx = -uy, ny = ux, fs = dimFs(it);
   if (it.rad) {
     // Radius: Linie vom Mittelpunkt zum Bogen, Pfeil am Bogen, kleines Kreuz im Mittelpunkt
     const al = Math.min(Math.max(6, fs * 0.7), len * 0.45), w = al * 0.32, c = Math.max(2.5, fs * 0.25);
@@ -363,15 +439,17 @@ function drawDim(ctx, it, noText) {
     }
     ctx.restore(); return;
   }
-  const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4), o = it.off || 0, sg = Math.sign(o) || 1;
-  const ax = x1 + nx * o, ay = y1 + ny * o, bx = x2 + nx * o, by = y2 + ny * o;     // Maßlinie (parallel verschoben)
+  const e = Math.max(5, fs * 0.6), t = Math.max(3.5, fs * 0.4), o = it.off || 0;
+  const { a: [ax, ay], b: [bx, by] } = dimPts(it);                                     // Maßlinie (parallel verschoben)
+  const o2 = (bx - x2) * nx + (by - y2) * ny;                                          // Abstand am 2. Punkt (bei waagrecht/senkrecht anders)
   ctx.save();
   ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(ax - ux * e * 0.5, ay - uy * e * 0.5); ctx.lineTo(bx + ux * e * 0.5, by + uy * e * 0.5);   // Maßlinie (leicht überstehend)
-  for (const [px, py, qx, qy] of [[x1, y1, ax, ay], [x2, y2, bx, by]]) {
+  for (const [px, py, qx, qy, oo] of [[x1, y1, ax, ay, o], [x2, y2, bx, by, o2]]) {
     // Maßhilfslinie: vom gemessenen Punkt (kleine Lücke) bis etwas über die Maßlinie hinaus
-    if (Math.abs(o) > e) { const g = Math.min(3, Math.abs(o) * 0.2); ctx.moveTo(px + nx * sg * g, py + ny * sg * g); ctx.lineTo(qx + nx * sg * e * 0.6, qy + ny * sg * e * 0.6); }
+    const sg = Math.sign(oo) || 1;
+    if (Math.abs(oo) > e) { const g = Math.min(3, Math.abs(oo) * 0.2); ctx.moveTo(px + nx * sg * g, py + ny * sg * g); ctx.lineTo(qx + nx * sg * e * 0.6, qy + ny * sg * e * 0.6); }
     else { ctx.moveTo(qx - nx * e, qy - ny * e); ctx.lineTo(qx + nx * e, qy + ny * e); }
     const dx = (ux + nx) * Math.SQRT1_2 * t, dy = (uy + ny) * Math.SQRT1_2 * t;                      // 45°-Schrägstrich
     ctx.moveTo(qx - dx, qy - dy); ctx.lineTo(qx + dx, qy + dy);
@@ -749,6 +827,10 @@ function bbox(it) {
     const x = Math.min(...xs), y = Math.min(...ys);
     return { x: x - m, y: y - m, w: Math.max(...xs) - x + 2 * m, h: Math.max(...ys) - y + 2 * m };
   }
+  if (it.t === 'shape' && it.kind === 'dim' && it.ang) {
+    const r = Math.hypot(it.x2 - it.x1, it.y2 - it.y1) + dimFs(it) * 2.2;
+    return { x: it.x1 - r, y: it.y1 - r, w: 2 * r, h: 2 * r };
+  }
   if (it.t === 'shape' && it.kind === 'dim') {
     const d = dimPts(it), xs = [it.x1, it.x2, d.a[0], d.b[0]], ys = [it.y1, it.y2, d.a[1], d.b[1]], m = dimFs(it) * 1.6;
     const x = Math.min(...xs), y = Math.min(...ys);
@@ -775,6 +857,7 @@ const inBox = (b, x, y, m = 0) => x >= b.x - m && x <= b.x + b.w + m && y >= b.y
 function shapeOutline(it) {
   if (hasRound(it)) return roundInfo(it).pts;
   if (it.kind === 'poly') return [...it.pts, it.pts[0]];
+  if (it.kind === 'dim' && it.ang) { const { r, a0, sw } = angGeom(it); return arcPts(it.x1, it.y1, r, a0, a0 + sw, 24); }
   if (it.kind === 'dim') { const d = dimPts(it); return [[it.x1, it.y1], d.a, d.b, [it.x2, it.y2]]; }
   const { x1, y1, x2, y2 } = it;
   if (it.kind === 'rect') return [[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]];
@@ -816,7 +899,7 @@ function xform(src, fn, k, da = 0, kx = k, ky = k) {
       if (Array.isArray(it.corners)) it.corners = it.corners.map(c => c ? { ...c, r: +(c.r * k).toFixed(2) } : null);
     }
     if (it.kind === 'poly') it.pts = it.pts.map(([x, y]) => fn(x, y).map(v => +v.toFixed(2)));
-    else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); if (it.kind === 'dim' && it.off) it.off *= Math.sqrt(kx * ky); }
+    else { [it.x1, it.y1] = fn(it.x1, it.y1); [it.x2, it.y2] = fn(it.x2, it.y2); if (it.kind === 'dim' && it.off) it.off *= Math.sqrt(kx * ky); if (it.ang && da) { it.t1 += da; it.t2 += da; } }
   } else {
     // Bild/Text: Mittelpunkt mitführen; Bilder drehen sich mit, Textfelder bleiben gerade
     const h0 = it.t === 'img' || it.t === 'table' ? it.h : (it.h || it.size * 1.35);
@@ -2211,13 +2294,13 @@ function dimGeo(p) {
   dimGeoCache.set(p, g); return g;
 }
 function dimHoverAt(p, x, y, k) {
-  const g = dimGeo(p);
+  const g = dimGeo(p), angMode = prefs.dimOrtho === 'ang';
   // Mittelpunkt eines Kreises/Bogens/einer Eckrundung: Radius bemaßen
   let circ = null, ccd = 12 / k;
   for (const c of g.circs) { const d = Math.hypot(c.cx - x, c.cy - y); if (d < ccd) { ccd = d; circ = c; } }
-  if (circ) return { circ };
+  if (circ && !angMode) return { circ };
   let corner = null, cd = 11 / k;
-  for (const q of g.pts) { const d = Math.hypot(q[0] - x, q[1] - y); if (d < cd) { cd = d; corner = q; } }
+  if (!angMode) for (const q of g.pts) { const d = Math.hypot(q[0] - x, q[1] - y); if (d < cd) { cd = d; corner = q; } }
   if (corner) return { corner: [corner[0], corner[1]] };
   let seg = null, sd = 10 / k;
   for (const s of g.segs) { const d = segDist(x, y, s[0][0], s[0][1], s[1][0], s[1][1]); if (d < sd) { sd = d; seg = s; } }
@@ -2255,7 +2338,7 @@ function onDimHover(e) {
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     ctx.globalAlpha = 1; ctx.lineWidth = 1.5 / k;
     for (const [px, py] of h.seg) { ctx.beginPath(); ctx.arc(px, py, 4 / k, 0, Math.PI * 2); ctx.stroke(); }
-    const fs = 12 / k, t = dimLabel({ x1, y1, x2, y2, scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2 }) + ' – antippen';
+    const fs = 12 / k, t = prefs.dimOrtho === 'ang' ? (S.angFirst ? '2. Linie antippen' : '1. Linie für den Winkel antippen') : dimLabel({ x1, y1, x2, y2, ortho: prefs.dimOrtho || undefined, scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2 }) + ' – antippen';
     ctx.font = `600 ${fs}px ${FONT}`; ctx.textBaseline = 'bottom';
     const tw = ctx.measureText(t).width, mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 10 / k;
     ctx.fillStyle = 'rgba(28,35,33,.85)'; ctx.fillRect(mx - tw / 2 - 5 / k, my - fs - 4 / k, tw + 10 / k, fs + 7 / k);
@@ -2271,7 +2354,7 @@ function dimFromRecog(a) {
   const r = a.recog, pen = prefs.sizes.pen || 1.5;
   return { t: 'shape', id: a.dimId ||= uid(), kind: 'dim', x1: +r.x1.toFixed(2), y1: +r.y1.toFixed(2), x2: +r.x2.toFixed(2), y2: +r.y2.toFixed(2),
     color: prefs.color, size: +Math.max(0.6, Math.min(pen, 2) * 0.6).toFixed(2), fs: +Math.max(8, prefs.textSize * 0.75).toFixed(1),
-    scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2, ...(a.radDim ? { rad: true } : {}) };
+    scale: prefs.dimScale || 50, unit: prefs.dimUnit ?? 'm', dec: prefs.dimDec ?? 2, ...(a.radDim ? { rad: true } : prefs.dimOrtho === 'h' || prefs.dimOrtho === 'v' ? { ortho: prefs.dimOrtho } : {}) };
 }
 /* Beim Ziehen einer Geraden: Winkel zur Waagerechten und Länge neben dem Linienende anzeigen */
 function drawLineInfo(ctx, x1, y1, x2, y2, k) {
@@ -2631,9 +2714,10 @@ function moveAct(e) {
   else if (t === 'restyle') restyleAt(x, y);
   else if (t === 'dimOffset') {
     const d = act.dim, { nx, ny } = dimPts(d), p = act.p;
-    const off = +(act.off0 + (x - act.x0) * nx + (y - act.y0) * ny).toFixed(2);
+    const sn = d.rad || d.ang ? { off: 0 } : snapDimOff(p, d, +(act.off0 + (x - act.x0) * nx + (y - act.y0) * ny).toFixed(2), act.k), off = sn.off;
+    if (act.ctx) { act.ctx.clearRect(0, 0, p.w, p.h); if (sn.o) drawDimSnap(act.ctx, { ...d, off }, sn.o, act.k); }
     const rr = Math.hypot(d.x2 - d.x1, d.y2 - d.y1), an = Math.atan2(y - d.y1, x - d.x1);
-    const nd = d.rad ? { ...d, x2: +(d.x1 + rr * Math.cos(an)).toFixed(2), y2: +(d.y1 + rr * Math.sin(an)).toFixed(2) } : { ...d, off }, old = act.cur || d;
+    const nd = d.ang ? { ...d, x2: +x.toFixed(2), y2: +y.toFixed(2) } : d.rad ? { ...d, x2: +(d.x1 + rr * Math.cos(an)).toFixed(2), y2: +(d.y1 + rr * Math.sin(an)).toFixed(2) } : { ...d, off }, old = act.cur || d;
     p.items = p.items.map(i => i.id === d.id ? nd : i);
     act.cur = nd; renderRegionSoon(act.pe, p, unionBox([bbox(old), bbox(nd)]));
   }
@@ -2697,8 +2781,10 @@ function moveAct(e) {
     // Linienende ziehen: das andere Ende bleibt stehen, rastet bei 0°/45°/90° ein
     const i = act.end, src = [...act.orig.values()][0];
     if (i === 3) {   // Maßlinie parallel verschieben
-      const { nx: qx, ny: qy } = dimPts(src), off = +((x - src.x1) * qx + (y - src.y1) * qy).toFixed(2);
-      applySel(null, 1, 0, 1, 1, { ...src, off }); ctx.clearRect(0, 0, act.p.w, act.p.h); return;
+      const { nx: qx, ny: qy } = dimPts(src), sn = snapDimOff(act.p, src, +((x - src.x1) * qx + (y - src.y1) * qy).toFixed(2), act.k), off = sn.off;
+      applySel(null, 1, 0, 1, 1, { ...src, off }); ctx.clearRect(0, 0, act.p.w, act.p.h);
+      if (sn.o) drawDimSnap(ctx, { ...src, off }, sn.o, act.k);
+      return;
     }
     const o = 3 - i;
     let [nx, ny] = snapLine(src['x' + o], src['y' + o], x, y);
@@ -2881,6 +2967,28 @@ function endAct(e) {
   const snapped = tool === 'marker' && snapRects(a);
   if (snapped) {
     addStrokes(pe, p, snapped); clearLive(pe); commit(p, a.before);
+  } else if ((tool === 'pen' || tool === 'marker') && a.recog && a.dimMode && prefs.dimOrtho === 'ang') {
+    clearLive(pe);
+    const r = a.recog;
+    if (Math.hypot(r.x2 - r.x1, r.y2 - r.y1) * a.k >= 4 || !a.hoverSeg) {
+      S.angFirst = null;
+      toast('Winkel bemaßen: zwei Linien nacheinander antippen (sie leuchten pink, wenn der Stift darüber schwebt).', 4500); return;
+    }
+    const f = S.angFirst;
+    if (!f || f.pid !== p.id) { S.angFirst = { pid: p.id, seg: a.hoverSeg, x: a.x0, y: a.y0 }; toast('Erste Linie gewählt – jetzt die zweite antippen.', 2500); return; }
+    S.angFirst = null;
+    const [[ax, ay], [bx, by]] = f.seg, [[cx, cy], [dx, dy]] = a.hoverSeg;
+    const den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+    if (Math.abs(den) < 1e-6 * Math.hypot(bx - ax, by - ay) * Math.hypot(dx - cx, dy - cy)) { toast('Die beiden Linien sind parallel – da gibt es keinen Winkel.', 3500); return; }
+    const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den, vx = ax + (bx - ax) * t, vy = ay + (by - ay) * t;
+    const mx = (f.x + a.x0) / 2, my = (f.y + a.y0) / 2, phi = Math.atan2(my - vy, mx - vx);
+    const r0 = Math.max(28, Math.min(Math.hypot(f.x - vx, f.y - vy), Math.hypot(a.x0 - vx, a.y0 - vy)) * 0.6);
+    const it = { ...dimFromRecog(a), id: uid(), ang: true, x1: +vx.toFixed(2), y1: +vy.toFixed(2), x2: +(vx + r0 * Math.cos(phi)).toFixed(2), y2: +(vy + r0 * Math.sin(phi)).toFixed(2),
+      t1: +Math.atan2(by - ay, bx - ax).toFixed(5), t2: +Math.atan2(dy - cy, dx - cx).toFixed(5) };
+    delete it.ortho;
+    addStrokes(pe, p, [it]); commit(p, a.before);
+    S.dimPending = { pid: p.id, id: it.id };
+    if (!prefs.angHint) { prefs.angHint = true; savePrefs(); toast('Winkel bemaßt. Jetzt aufsetzen und ziehen: der Bogen folgt dem Stift – so wählst du Radius und welchen der Winkel. Kurz tippen = so lassen.', 6000); }
   } else if ((tool === 'pen' || tool === 'marker') && a.recog) {
     const r = a.recog;
     // nur angetippt, aber auf einer Linie/Kante: genau diese Strecke bemaßen
@@ -3053,7 +3161,7 @@ function renderSel() {
   // Ecken-Modus: an jeder Ecke ein Punkt zum Antippen
   const vtxDots = vtxOn ? roundVerts(items[0]).map(([vx, vy], i) => `<div class="vtx${S.vtx.i === i ? ' on' : ''}${cornerAt(items[0], i) ? ' rnd' : ''}" data-v="${i}" title="Ecke ${i + 1} runden" style="left:${((vx - b.x) * sc + pad).toFixed(1)}px;top:${((vy - b.y) * sc + pad).toFixed(1)}px"></div>`).join('') : '';
   // Einzelne Linie/Pfeil: Griffe an beiden Enden; sonst Ecken (proportional) und Seiten (nur Breite/Höhe)
-  const line = items.length === 1 && items[0].t === 'shape' && ['line', 'arrow', 'dim'].includes(items[0].kind) ? items[0] : null;
+  const line = items.length === 1 && items[0].t === 'shape' && ['line', 'arrow', 'dim'].includes(items[0].kind) && !items[0].ang ? items[0] : null;
   const grips = line
     ? [1, 2].map(i => `<div class="lend" data-i="${i}" title="Ende ziehen" style="left:${((line['x' + i] - b.x) * sc + pad).toFixed(1)}px;top:${((line['y' + i] - b.y) * sc + pad).toFixed(1)}px"></div>`).join('')
       + (line.kind === 'dim' ? (d => `<div class="lend mid" data-i="3" title="Maßlinie parallel verschieben" style="left:${(((d.a[0] + d.b[0]) / 2 - b.x) * sc + pad).toFixed(1)}px;top:${(((d.a[1] + d.b[1]) / 2 - b.y) * sc + pad).toFixed(1)}px"></div>`)(dimPts(line)) : '')
@@ -3702,15 +3810,16 @@ function syncScalePop() {
   $('#scaleOwn').value = SCALES.includes(sc) ? '' : sc;
   document.querySelectorAll('#unitList [data-unit]').forEach(b => b.classList.toggle('active', b.dataset.unit === (prefs.dimUnit ?? 'm')));
   document.querySelectorAll('#decList [data-dec]').forEach(b => b.classList.toggle('active', +b.dataset.dec === (prefs.dimDec ?? 2)));
+  document.querySelectorAll('#orthoList [data-ortho]').forEach(b => b.classList.toggle('active', b.dataset.ortho === (prefs.dimOrtho || '')));
 }
 // Änderung gilt für neue Maße und für markierte Maße
 function setDimPref(key, val) {
   prefs[key] = val; savePrefs(); syncScalePop(); updToolbar();
-  if (!S.sel) return;
-  const { p, ids } = S.sel, prop = { dimScale: 'scale', dimUnit: 'unit', dimDec: 'dec' }[key];
-  if (!p.items.some(i => ids.has(i.id) && i.kind === 'dim')) return;
+  if (!S.sel || (key === 'dimOrtho' && val === 'ang')) return;
+  const { p, ids } = S.sel, prop = { dimScale: 'scale', dimUnit: 'unit', dimDec: 'dec', dimOrtho: 'ortho' }[key];
+  if (!p.items.some(i => ids.has(i.id) && i.kind === 'dim' && !i.rad && !i.ang)) return;
   const before = snap(p);
-  p.items = p.items.map(i => ids.has(i.id) && i.kind === 'dim' ? { ...i, [prop]: val } : i);
+  p.items = p.items.map(i => ids.has(i.id) && i.kind === 'dim' && !i.rad && !i.ang ? (prop === 'ortho' && !val ? (({ ortho, ...r }) => r)(i) : { ...i, [prop]: val }) : i);
   refreshPage(p); commit(p, before); renderSel();
 }
 $('#scalePop').addEventListener('click', e => {
@@ -3718,6 +3827,7 @@ $('#scalePop').addEventListener('click', e => {
   if (b.dataset.scale) setDimPref('dimScale', +b.dataset.scale);
   else if (b.dataset.unit != null) setDimPref('dimUnit', b.dataset.unit);
   else if (b.dataset.dec != null) setDimPref('dimDec', +b.dataset.dec);
+  else if (b.dataset.ortho != null) { S.angFirst = null; setDimPref('dimOrtho', prefs.dimOrtho === b.dataset.ortho ? '' : b.dataset.ortho); }
 });
 $('#scaleOwn').addEventListener('change', e => { const v = parseFloat(String(e.target.value).replace(',', '.')); if (v > 0) setDimPref('dimScale', v); });
 /* ---------------- Tabellen und Matrizen: gemeinsames Eingabefenster ---------------- */
@@ -4348,7 +4458,7 @@ function updToolbar() {
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
   $('#btnDim').hidden = t !== 'pen'; $('#btnDim').classList.toggle('active', !!prefs.dim);
-  $('#btnScale').hidden = t !== 'pen' || !prefs.dim; $('#btnScale').textContent = '1:' + fmtScale(prefs.dimScale || 50) + ' ▾';
+  $('#btnScale').hidden = t !== 'pen' || !prefs.dim; $('#btnScale').textContent = '1:' + fmtScale(prefs.dimScale || 50) + ({ h: ' ↔', v: ' ↕', ang: ' ∠' }[prefs.dimOrtho] || '') + ' ▾';
   $('#btnSnap').hidden = t !== 'marker';
   $('#btnSnap').classList.toggle('active', prefs.snapText !== false);
   $('#markerBox').hidden = t !== 'marker';
@@ -4376,7 +4486,7 @@ function updToolbar() {
 const COLOR_TOOLS = ['pen', 'marker', 'shape', 'text', 'stamp', 'restyle'];
 prefs.toolColors ||= { marker: COLORS[6] };
 function setTool(t) {
-  commitText(); S.dimPending = null;
+  commitText(); S.dimPending = null; S.angFirst = null;
   prefs.tool = t;
   if (t === 'pen' || t === 'marker') prefs.lastDraw = t;
   if (COLOR_TOOLS.includes(t)) {
@@ -5344,7 +5454,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 81;
+const APP_VERSION = 83;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5526,6 +5636,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.6': ['Bemaßung: Beim seitlichen Verschieben rastet die Maßlinie auf der Linie anderer paralleler Maße ein (pinke Hilfslinie) – so liegen Maßketten genau in einer Flucht', 'Bemaßung nur waagrecht oder nur senkrecht (Maßstab-Menü „1:50 ▾“ → Richtung): bei versetzten Punkten wird nur der Abstand in dieser Achse gemessen. Nochmal antippen = wieder normal', 'Winkelbemaßung (Maßstab-Menü → ∠ Winkel): zwei Linien nacheinander antippen, dann den Bogen mit dem Stift an die gewünschte Stelle ziehen'],
   '6.5': ['Ordner wie im Explorer: in einem Ordner siehst du nur seine eigenen Notizen; Unterordner erscheinen als Ordner-Kacheln und zeigen ihren Inhalt erst beim Öffnen. Die Suche findet weiterhin auch in Unterordnern'],
   '6.4': ['Lasso: im Uhrzeigersinn wird nur markiert, was ganz im Lasso liegt (violett); gegen den Uhrzeigersinn alles, was das Lasso berührt (gelb)'],
   '6.3': ['Statik-Stempel: Feldlänge (cm) gilt jetzt für alle statischen Systeme, den Durchlaufträger, die Rahmen und die Streckenlasten – Lasten passen so genau auf ein Feld. Feld leer lassen = wächst wie früher mit dem Größenregler'],
