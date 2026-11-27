@@ -5104,7 +5104,7 @@ async function renderLibrary() {
   const notes = (await dbAll('notes')).sort((a, b) => b.updated - a.updated);
   const folders = allFolders(notes);
   if (S.folder && !folders.includes(S.folder)) S.folder = '';
-  // Pfad: Alle Notizen › Uni › Mathe  (antippen = dorthin springen, ⋯ = Ordner bearbeiten)
+  // Pfad: Notizbuch › Uni › Mathe  (antippen = dorthin springen, ⋯ = Ordner bearbeiten)
   const cb = $('#crumbs'); cb.innerHTML = '';
   const crumb = (label, val) => {
     const b = document.createElement('button'); b.textContent = label;
@@ -5112,7 +5112,7 @@ async function renderLibrary() {
     b.onclick = () => { S.folder = val; renderLibrary(); };
     cb.appendChild(b);
   };
-  crumb('Alle Notizen', '');
+  crumb('Notizbuch', '');
   if (S.folder) {
     const parts = S.folder.split('/');
     parts.forEach((p, i) => { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; cb.appendChild(s); crumb(p, parts.slice(0, i + 1).join('/')); });
@@ -5120,23 +5120,28 @@ async function renderLibrary() {
     m.onclick = e => showPop($('#folderPop'), e.currentTarget);
     cb.appendChild(m);
   }
-  // Unterordner des aktuellen Ordners
+  // wie im Explorer: Unterordner als Kacheln vorne in der Liste, darunter nur die Notizen, die direkt in diesem Ordner liegen
   const fbox = $('#folders'); fbox.innerHTML = '';
-  for (const f of folders.filter(f => parentOf(f) === S.folder)) {
-    const b = document.createElement('button'); b.className = 'chip dir'; b.textContent = leafOf(f);
-    const cnt = notes.filter(n => inFolder(n.folder, f)).length;
-    if (cnt) { const sm = document.createElement('small'); sm.textContent = cnt; b.appendChild(sm); }
-    b.onclick = () => { S.folder = f; renderLibrary(); };
-    fbox.appendChild(b);
-  }
+  const subs = folders.filter(f => parentOf(f) === S.folder);
   const add = document.createElement('button'); add.className = 'chip add'; add.textContent = S.folder ? '+ Unterordner' : '+ Ordner';
   add.onclick = async () => { const f = await newFolderIn(S.folder); if (f) { S.folder = f; renderLibrary(); } };
   fbox.appendChild(add);
 
   const q = S.search.trim().toLowerCase();
-  // im Ordner: seine Notizen und die aller Unterordner
-  const list = notes.filter(n => inFolder(n.folder, S.folder) && (!q || n.title.toLowerCase().includes(q)));
+  // ohne Suche: nur Notizen direkt in diesem Ordner. Mit Suche: auch in allen Unterordnern (mit Ordnerpfad)
+  const list = q ? notes.filter(n => inFolder(n.folder, S.folder) && n.title.toLowerCase().includes(q))
+    : notes.filter(n => (n.folder || '') === S.folder);
   const grid = $('#noteGrid'); grid.innerHTML = '';
+  if (!q) for (const f of subs) {
+    const nN = notes.filter(n => n.folder === f).length, nF = folders.filter(x => parentOf(x) === f).length;
+    const card = document.createElement('article'); card.className = 'card folder-card';
+    card.innerHTML = `<button class="card-open"><div class="thumb folder-thumb"><svg viewBox="0 0 64 52" aria-hidden="true"><path d="M4 10a4 4 0 0 1 4-4h16l6 6h26a4 4 0 0 1 4 4v28a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z"/></svg></div></button>
+      <div class="card-meta"><div class="card-text"><div class="card-title"></div><div class="card-sub"></div></div></div>`;
+    card.querySelector('.card-title').textContent = leafOf(f);
+    card.querySelector('.card-sub').textContent = [nN ? `${nN} ${nN === 1 ? 'Notiz' : 'Notizen'}` : '', nF ? `${nF} ${nF === 1 ? 'Ordner' : 'Ordner'}` : ''].filter(Boolean).join(' · ') || 'leer';
+    card.querySelector('.card-open').onclick = () => { S.folder = f; renderLibrary(); };
+    grid.appendChild(card);
+  }
   for (const n of list) {
     const card = document.createElement('article'); card.className = 'card'; card.dataset.id = n.id;
     card.innerHTML = `<button class="card-open"><div class="thumb"></div></button>
@@ -5153,7 +5158,7 @@ async function renderLibrary() {
     card.querySelector('.card-menu').onclick = e => { cardTarget = n; showPop($('#cardPop'), e.currentTarget); };
     grid.appendChild(card);
   }
-  $('#emptyLib').hidden = list.length > 0 || !!q;
+  $('#emptyLib').hidden = list.length > 0 || subs.length > 0 || !!q || !!S.folder;
 }
 let cardTarget = null;
 $('#cardPop').addEventListener('click', async e => {
@@ -5339,7 +5344,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 80;
+const APP_VERSION = 81;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5439,7 +5444,7 @@ const TUTORIAL = [
     <h3>Die Übersicht</h3><ul>
     <li><b>Neue Notiz</b> legt ein leeres Heft an, <b>PDF öffnen</b> holt eine PDF (z. B. aus Nextcloud) zum Beschreiben.</li>
     <li><b>Suche</b> findet Notizen nach ihrem Titel.</li>
-    <li><b>Ordner</b>: oben steht der Pfad (z. B. Alle Notizen › Uni › Mathe) – antippen springt zurück. Darunter die Unterordner und „+ Ordner“. Ordner lassen sich beliebig tief verschachteln.</li>
+    <li><b>Ordner</b>: wie im Explorer: in einem Ordner siehst du nur seine eigenen Notizen, Unterordner erscheinen als gelbe Ordner-Kacheln – antippen öffnet sie. Oben steht der Pfad (z. B. Notizbuch › Uni › Mathe), antippen springt zurück; ⋯ daneben benennt den Ordner um, verschiebt oder löscht ihn. Die Suche findet auch Notizen in Unterordnern.</li>
     <li><b>⋯ neben dem Ordnernamen</b>: Unterordner anlegen, umbenennen, verschieben, löschen (der Inhalt rutscht eine Ebene nach oben).</li>
     <li><b>⋯ an einer Notiz</b>: umbenennen, in einen Ordner verschieben oder kopieren, löschen.</li></ul>` },
   { t: 'Schreiben mit dem Stift', i: '[data-tool="pen"]', h: `<ul>
@@ -5521,6 +5526,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.5': ['Ordner wie im Explorer: in einem Ordner siehst du nur seine eigenen Notizen; Unterordner erscheinen als Ordner-Kacheln und zeigen ihren Inhalt erst beim Öffnen. Die Suche findet weiterhin auch in Unterordnern'],
   '6.4': ['Lasso: im Uhrzeigersinn wird nur markiert, was ganz im Lasso liegt (violett); gegen den Uhrzeigersinn alles, was das Lasso berührt (gelb)'],
   '6.3': ['Statik-Stempel: Feldlänge (cm) gilt jetzt für alle statischen Systeme, den Durchlaufträger, die Rahmen und die Streckenlasten – Lasten passen so genau auf ein Feld. Feld leer lassen = wächst wie früher mit dem Größenregler'],
   '6.2': ['Statik-Stempel: Normalkraftgelenk und Querkraftgelenk (bei den Auflagern)', 'Statik-Stempel: Horizontallast, Dreiecks- und Trapezlast jetzt auch gespiegelt (links höchster Punkt bzw. Pfeil nach links)', 'Statik-Stempel: Durchlaufträger mit frei wählbarer Feldanzahl (1–10) und Feldlänge in cm'],

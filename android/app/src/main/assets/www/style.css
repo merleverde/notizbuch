@@ -636,3 +636,7 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 .statik-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .span-opt { display: flex; align-items: center; gap: 6px; font-size: .9rem; }
 .span-opt input { width: 64px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; }
+
+/* Ordner-Kacheln in der Bibliothek (wie im Explorer) */
+.folder-thumb { background: var(--surface-2, #f1f3f2); box-shadow: none; border: 1px solid var(--line); }
+.folder-thumb svg { width: 58%; height: auto; fill: #e8b93a; stroke: #c99a1e; stroke-width: 1.5; }
