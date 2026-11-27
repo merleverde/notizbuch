@@ -574,6 +574,24 @@ public class MainActivity extends ComponentActivity {
             });
         }
 
+        /** FolderSync (Pro oder kostenlos) alle Ordnerpaare synchronisieren lassen – offizielle Schnittstelle von FolderSync.
+         *  Liefert true, wenn FolderSync installiert ist. */
+        @JavascriptInterface
+        public boolean folderSync() {
+            boolean any = false;
+            for (String pkg : new String[]{"dk.tacit.android.foldersync.full", "dk.tacit.android.foldersync.lite"}) {
+                try {
+                    getPackageManager().getPackageInfo(pkg, 0);
+                    Intent i = new Intent("com.tacit.foldersync.action.SYNC_ALL");
+                    i.setPackage(pkg);
+                    i.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+                    sendBroadcast(i);
+                    any = true;
+                } catch (Exception ignored) { }
+            }
+            return any;
+        }
+
         @JavascriptInterface
         public void keepAwake(boolean on) {
             runOnUiThread(() -> {

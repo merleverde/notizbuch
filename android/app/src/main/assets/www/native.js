@@ -66,6 +66,8 @@
 
   const mimesOf = types => [...new Set((types || []).flatMap(t => Object.keys(t.accept || {})))];
   window.showOpenFilePicker = async (o = {}) => [new NativeFileHandle(await call('openDocument', JSON.stringify(mimesOf(o.types))))];
+  // FolderSync nach dem Speichern anstoßen (true = FolderSync gefunden)
+  window.triggerFolderSync = () => { try { return !!B.folderSync(); } catch { return false; } };
   // PDF über das Android-Teilen-Menü weitergeben (z. B. „In Nextcloud hochladen“)
   window.shareBytes = (name, bytes, mime = 'application/pdf') => call('shareFile', name, mime, bytesToB64(bytes));
   window.showSaveFilePicker = async (o = {}) => new NativeFileHandle(await call('createDocument', o.suggestedName || 'Notiz.pdf', mimesOf(o.types)[0] || 'application/octet-stream'));

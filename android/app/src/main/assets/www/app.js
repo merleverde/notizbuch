@@ -1878,6 +1878,8 @@ async function doSave(pickNew, suggest) {
     S.note.fileName = h.name;
     S.note.title = h.name; $('#noteTitle').value = h.name;   // Titelzeile zeigt den Dateinamen
     setFileClean();
+    // FolderSync gleich anstoßen (lokale Datei in einem synchronisierten Ordner → sofort in die Cloud)
+    if (prefs.folderSync && window.triggerFolderSync && !isCloud(h)) window.triggerFolderSync();
     const cut = S.note.pages.some(p => p.endless && endlessCrop(p).cut);
     if (cut) setTimeout(() => toast('Hinweis: Das Endlos-Papier ist größer als A0 – im PDF wurde es auf A0 abgeschnitten (oben links beginnend).', 7000), 3500);
     toast(isCloud(h) ? `In „${h.name}“ gespeichert. Die Nextcloud-App lädt die Datei jetzt hoch – bei schlechter Verbindung kann das dauern (Stand in der Nextcloud-App unter „Uploads“).` : `In „${h.name}“ gespeichert.`, isCloud(h) ? 6500 : undefined);
@@ -4508,6 +4510,8 @@ function updToolbar() {
   $('#customColor').value = /^#[0-9a-f]{6}$/i.test(prefs.color) ? prefs.color : '#000000';
   $('#optFinger').checked = prefs.finger;
   $('#optEditable').checked = prefs.editable;
+  $('#optFolderSyncRow').hidden = !window.triggerFolderSync;
+  $('#optFolderSync').checked = !!prefs.folderSync;
 }
 /* Jedes farbige Werkzeug merkt sich seine zuletzt gewählte Farbe (z. B. Stift schwarz, Marker rot:
    beim Zurückwechseln zum Stift ist er wieder schwarz). Der Marker startet in Gelb. */
@@ -4762,6 +4766,11 @@ let penTestOn = false;
 $('#penTestClose').addEventListener('click', () => { $('#penTest').hidden = true; penTestOn = false; });
 $('#optFinger').addEventListener('change', e => { prefs.finger = e.target.checked; savePrefs(); toast(prefs.finger ? 'Finger zeichnet jetzt. Scrollen mit zwei Fingern.' : 'Finger scrollt, nur der Stift zeichnet.'); });
 $('#optEditable').addEventListener('change', e => { prefs.editable = e.target.checked; savePrefs(); });
+$('#optFolderSync').addEventListener('change', e => {
+  prefs.folderSync = e.target.checked; savePrefs();
+  if (prefs.folderSync && window.triggerFolderSync && !window.triggerFolderSync()) toast('FolderSync ist auf diesem Tablet nicht installiert.', 4000);
+  else if (prefs.folderSync) toast('Nach jedem Speichern startet FolderSync jetzt den Abgleich aller Ordnerpaare.', 4500);
+});
 
 /* ---------------- Seiten: einfügen, duplizieren, verschieben, löschen ---------------- */
 function pagesChanged() { layout(); buildPanel(); markDirty(); }
@@ -5483,7 +5492,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 86;
+const APP_VERSION = 87;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5665,6 +5674,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '7.0': ['Neu im Menü ⋮: „Nach dem Speichern FolderSync starten“ – FolderSync lädt gespeicherte PDFs dann sofort in die Cloud hoch, statt auf den nächsten Abgleich zu warten'],
   '6.9': ['Neu: „PDF teilen …“ (Menü ⋮) – die PDF über das Android-Teilen-Menü z. B. mit „Nextcloud → Hochladen“ in einen Ordner legen. Funktioniert auch, wenn das Speichern in Nextcloud über die Dateiauswahl scheitert'],
   '6.8': ['Speichern: Kennt die Nextcloud-App die Datei nicht mehr („No file in database …“), erklärt die App jetzt, was zu tun ist, und bietet an, die Datei neu auszuwählen oder als neue Datei zu speichern'],
   '6.7': ['Bemaßung: waagrecht ↔, senkrecht ↕ und Winkel ∠ jetzt als eigene Knöpfe direkt neben „Bemaßung“ (nochmal antippen = normal)'],
