@@ -3810,8 +3810,16 @@ function syncScalePop() {
   $('#scaleOwn').value = SCALES.includes(sc) ? '' : sc;
   document.querySelectorAll('#unitList [data-unit]').forEach(b => b.classList.toggle('active', b.dataset.unit === (prefs.dimUnit ?? 'm')));
   document.querySelectorAll('#decList [data-dec]').forEach(b => b.classList.toggle('active', +b.dataset.dec === (prefs.dimDec ?? 2)));
-  document.querySelectorAll('#orthoList [data-ortho]').forEach(b => b.classList.toggle('active', b.dataset.ortho === (prefs.dimOrtho || '')));
 }
+// Bemaßungsart direkt in der Leiste: ↔ waagrecht, ↕ senkrecht, ∠ Winkel (nochmal antippen = normal)
+function syncDimKinds() { document.querySelectorAll('#dimKinds [data-ortho]').forEach(b => b.classList.toggle('active', b.dataset.ortho === (prefs.dimOrtho || ''))); }
+$('#dimKinds').addEventListener('click', e => {
+  const b = e.target.closest('[data-ortho]'); if (!b) return;
+  S.angFirst = null;
+  const v = prefs.dimOrtho === b.dataset.ortho ? '' : b.dataset.ortho;
+  setDimPref('dimOrtho', v);
+  if (v === 'ang') toast('Winkel: zwei Linien nacheinander antippen.', 2500);
+});
 // Änderung gilt für neue Maße und für markierte Maße
 function setDimPref(key, val) {
   prefs[key] = val; savePrefs(); syncScalePop(); updToolbar();
@@ -3827,7 +3835,6 @@ $('#scalePop').addEventListener('click', e => {
   if (b.dataset.scale) setDimPref('dimScale', +b.dataset.scale);
   else if (b.dataset.unit != null) setDimPref('dimUnit', b.dataset.unit);
   else if (b.dataset.dec != null) setDimPref('dimDec', +b.dataset.dec);
-  else if (b.dataset.ortho != null) { S.angFirst = null; setDimPref('dimOrtho', prefs.dimOrtho === b.dataset.ortho ? '' : b.dataset.ortho); }
 });
 $('#scaleOwn').addEventListener('change', e => { const v = parseFloat(String(e.target.value).replace(',', '.')); if (v > 0) setDimPref('dimScale', v); });
 /* ---------------- Tabellen und Matrizen: gemeinsames Eingabefenster ---------------- */
@@ -4458,7 +4465,8 @@ function updToolbar() {
   $('#rulerBox').hidden = t !== 'pen' && t !== 'marker';
   $('#btnRuler').classList.toggle('active', !!prefs.ruler);
   $('#btnDim').hidden = t !== 'pen'; $('#btnDim').classList.toggle('active', !!prefs.dim);
-  $('#btnScale').hidden = t !== 'pen' || !prefs.dim; $('#btnScale').textContent = '1:' + fmtScale(prefs.dimScale || 50) + ({ h: ' ↔', v: ' ↕', ang: ' ∠' }[prefs.dimOrtho] || '') + ' ▾';
+  $('#btnScale').hidden = t !== 'pen' || !prefs.dim; $('#btnScale').textContent = '1:' + fmtScale(prefs.dimScale || 50) + ' ▾';
+  $('#dimKinds').hidden = $('#btnScale').hidden; syncDimKinds();
   $('#btnSnap').hidden = t !== 'marker';
   $('#btnSnap').classList.toggle('active', prefs.snapText !== false);
   $('#markerBox').hidden = t !== 'marker';
@@ -5454,7 +5462,7 @@ if ('launchQueue' in window) {
 }
 /* Updates: Die neue Version wird im Hintergrund geladen. Sobald sie bereit ist, lädt die App neu.
    In der Übersicht passiert das sofort, im Editor erst nach dem Schließen der Notiz (nichts geht verloren). */
-const APP_VERSION = 83;
+const APP_VERSION = 84;
 const versionText = NATIVE ? `Version ${APP_VERSION} · Android-App ${window.NATIVE_APP.version}` : `Version ${APP_VERSION}`;
 $('#appVersion').textContent = versionText;
 $('#settingsVersion').textContent = versionText;
@@ -5636,6 +5644,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
+  '6.7': ['Bemaßung: waagrecht ↔, senkrecht ↕ und Winkel ∠ jetzt als eigene Knöpfe direkt neben „Bemaßung“ (nochmal antippen = normal)'],
   '6.6': ['Bemaßung: Beim seitlichen Verschieben rastet die Maßlinie auf der Linie anderer paralleler Maße ein (pinke Hilfslinie) – so liegen Maßketten genau in einer Flucht', 'Bemaßung nur waagrecht oder nur senkrecht (Maßstab-Menü „1:50 ▾“ → Richtung): bei versetzten Punkten wird nur der Abstand in dieser Achse gemessen. Nochmal antippen = wieder normal', 'Winkelbemaßung (Maßstab-Menü → ∠ Winkel): zwei Linien nacheinander antippen, dann den Bogen mit dem Stift an die gewünschte Stelle ziehen'],
   '6.5': ['Ordner wie im Explorer: in einem Ordner siehst du nur seine eigenen Notizen; Unterordner erscheinen als Ordner-Kacheln und zeigen ihren Inhalt erst beim Öffnen. Die Suche findet weiterhin auch in Unterordnern'],
   '6.4': ['Lasso: im Uhrzeigersinn wird nur markiert, was ganz im Lasso liegt (violett); gegen den Uhrzeigersinn alles, was das Lasso berührt (gelb)'],

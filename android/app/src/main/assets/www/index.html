@@ -116,6 +116,7 @@
       <button id="btnRuler" title="Lineal: jeder Strich wird eine gerade Linie">Lineal</button>
       <button id="btnDim" title="Bemaßung: jeder Strich wird eine Maßlinie mit Maßzahl">Bemaßung</button>
       <button id="btnScale" title="Maßstab und Einheit der Bemaßung">1:50 ▾</button>
+      <span id="dimKinds" class="dim-kinds" hidden><button data-ortho="h" title="Nur waagrecht bemaßen (nochmal antippen = normal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 7v10M21 7v10M6 9l-3 3 3 3M18 9l3 3-3 3"/></svg></button><button data-ortho="v" title="Nur senkrecht bemaßen (nochmal antippen = normal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M7 3h10M7 21h10M9 6l3-3 3 3M9 18l3 3 3-3"/></svg></button><button data-ortho="ang" title="Winkel bemaßen: zwei Linien antippen (nochmal antippen = normal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 20h18M3 20L15 4M11 20a8 8 0 0 0-2.4-5.6"/></svg></button></span>
       <button id="btnSnap" title="Textmarker rastet auf PDF-Seiten an den Textzeilen ein">Text einrasten</button>
     </div>
     <div id="markerBox" class="seg marker-box" hidden>
@@ -269,10 +270,6 @@
   <div class="style-title">Einheit</div>
   <div class="scale-row" id="unitList">
     <button data-unit="mm">mm</button><button data-unit="cm">cm</button><button data-unit="m">m</button><button data-unit="">ohne</button>
-  </div>
-  <div class="style-title">Art (nochmal antippen = normal)</div>
-  <div class="scale-row" id="orthoList">
-    <button data-ortho="h">↔ waagrecht</button><button data-ortho="v">↕ senkrecht</button><button data-ortho="ang">∠ Winkel</button>
   </div>
   <div class="style-title">Nachkommastellen</div>
   <div class="scale-row" id="decList">

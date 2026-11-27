@@ -640,3 +640,9 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 /* Ordner-Kacheln in der Bibliothek (wie im Explorer) */
 .folder-thumb { background: var(--surface-2, #f1f3f2); box-shadow: none; border: 1px solid var(--line); }
 .folder-thumb svg { width: 58%; height: auto; fill: #e8b93a; stroke: #c99a1e; stroke-width: 1.5; }
+
+/* Bemaßungsart: drei kleine Schalter neben „Bemaßung“ */
+.dim-kinds { display: inline-flex; gap: 2px; }
+.dim-kinds[hidden] { display: none; }
+.dim-kinds button { min-width: 36px; padding-left: 6px; padding-right: 6px; }
+.dim-kinds button svg { width: 22px; height: 22px; }
