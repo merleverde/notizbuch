@@ -646,3 +646,26 @@ dialog.crop-dlg { width: auto; max-width: calc(100vw - 32px); }
 .dim-kinds[hidden] { display: none; }
 .dim-kinds button { min-width: 36px; padding-left: 6px; padding-right: 6px; }
 .dim-kinds button svg { width: 22px; height: 22px; }
+
+/* Auswahl-Werkzeuge in der oberen Leiste */
+.sel-tools { display: flex; align-items: center; gap: 8px; flex: none; }
+.sel-tools[hidden] { display: none; }
+.sel-tools .seg button { color: var(--fg); }
+/* Griff zum Verschieben der Auswahl-Leiste */
+.selbar .selgrip { display: grid; place-items: center; width: 26px; cursor: grab; color: var(--muted); font-size: 1.05rem; touch-action: none; user-select: none; -webkit-user-select: none; border-radius: 8px; }
+.selbar .selgrip:active { cursor: grabbing; background: var(--surface-2); }
+/* Stift-Symbole in ihrer aktuellen Farbe (dünner dunkler Rand, damit auch Gelb sichtbar bleibt) */
+.tool.colored svg { color: var(--tc); filter: drop-shadow(0 0 .6px rgba(0,0,0,.6)); }
+/* unsichtbarer Farbwähler für Lieblingsfarben */
+.fav-color { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* Linienarten */
+.dash-btn { display: flex !important; align-items: center; gap: 2px; }
+.dash-btn svg { width: 30px !important; height: 12px !important; }
+.dash-btn small { font-size: .6rem; color: var(--muted); }
+.dash-grid { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 6px; }
+.dash-grid button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); font: inherit; font-size: .85rem; text-align: left; }
+.dash-grid button svg { width: 44px; height: 12px; flex: none; }
+.dash-grid button.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.dash-grid.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dash-grid.compact button { flex-direction: column; gap: 4px; padding: 6px; font-size: .72rem; text-align: center; }

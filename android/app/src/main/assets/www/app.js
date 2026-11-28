@@ -18,7 +18,22 @@ const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-se
 /* Schriftarten für Textfelder (alle auf Android eingebaut, funktionieren also auch offline) */
 const FONTS = { sans: FONT, serif: '"Noto Serif", Georgia, "Times New Roman", serif', mono: '"Droid Sans Mono", "Courier New", monospace', hand: '"Dancing Script", cursive' };
 const fontOf = it => FONTS[it.font] || FONT;
+/* Linienarten für Formen: gestrichelt, kurz, lang, gepunktet, Strich-Punkt (Muster wächst mit der Strichstärke) */
+const DASHES = [['', 'Durchgezogen'], ['dash', 'Gestrichelt'], ['short', 'Kurze Striche'], ['long', 'Lange Striche'], ['dot', 'Gepunktet'], ['dashdot', 'Strich-Punkt']];
+const dashKind = d => d === true ? 'dash' : (d || '');
+function dashPattern(it) {
+  const k = dashKind(it.dash), w = it.size || 1, g = Math.max(3, w * 2.5);
+  if (!k) return null;
+  if (k === 'short') return [Math.max(2, w * 1.5), Math.max(2.5, w * 2)];
+  if (k === 'long') return [Math.max(10, w * 8), Math.max(4, w * 3)];
+  if (k === 'dot') return [0.01, Math.max(3, w * 2.5)];
+  if (k === 'dashdot') return [Math.max(8, w * 6), g, 0.01, g];
+  return [Math.max(3, w * 3), g];
+}
+const dashIcon = k => `<svg viewBox="0 0 40 12"><path d="M3 6h34" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" ${k ? `stroke-dasharray="${({ dash: '7 5', short: '3 4', long: '13 5', dot: '0.01 5', dashdot: '9 4 0.01 4' })[k]}"` : ''}/></svg>`;
 const COLORS = ['#1b1f24', '#1f4fd1', '#d0312d', '#1e8e4f', '#ef8a00', '#8a3fc2', '#ffd21f'];
+// Eigene Lieblingsfarben (lange auf eine Farbe drücken = ersetzen); sonst die Standardfarben
+const favColors = () => (Array.isArray(prefs.favColors) && prefs.favColors.length === COLORS.length ? prefs.favColors : COLORS);
 const SIZE_RANGE = { pen: [0.5, 10, 0.5], marker: [4, 40, 1], eraser: [6, 60, 2], shape: [0.5, 10, 0.5], stamp: [12, 90, 2], restyle: [0.5, 10, 0.5] };
 const DATA_NAME = 'notizbuch.json';
 const ORIG_NAME = 'notizbuch-original.pdf';
@@ -251,7 +266,7 @@ function drawStroke(ctx, it) {
   if (it.tool === 'pen' && penStyle(it).solid) {
     // Rest einer radierten Form: gerade Verbindungen, damit Ecken spitz bleiben
     ctx.lineWidth = it.size;
-    if (it.dash) ctx.setLineDash([Math.max(3, it.size * 3), Math.max(3, it.size * 2.5)]);
+    if (it.dash) ctx.setLineDash(dashPattern(it));
     ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
     if (n === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
     for (let i = 1; i < n; i++) ctx.lineTo(pts[i][0], pts[i][1]);
@@ -514,7 +529,7 @@ function drawShape(ctx, it) {
   ctx.save();
   ctx.strokeStyle = it.color; ctx.lineWidth = it.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const { x1, y1, x2, y2 } = it;
-  if (it.dash) ctx.setLineDash([Math.max(3, it.size * 3), Math.max(3, it.size * 2.5)]);
+  if (it.dash) ctx.setLineDash(dashPattern(it));
   ctx.beginPath();
   if (hasRound(it)) { roundInfo(it).pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
   else if (it.kind === 'poly') { it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
@@ -687,7 +702,7 @@ function hatchIcon(h) {
 function shapeToStrokes(it) {
   if (it.kind === 'dim') return [];          // Bemaßung wird beim Radieren als Ganzes gelöscht
   const base = { t: 'stroke', tool: 'pen', style: 'shape', color: it.color, size: it.size };
-  if (it.dash) base.dash = true;
+  if (it.dash) base.dash = it.dash;
   const lines = [], out0 = [];
   const { x1, y1, x2, y2 } = it;
   if (it.kind === 'ellipse') {
@@ -2876,7 +2891,7 @@ function compassArc(m, color, size) {
     pts.push([+(m.cx + m.r * Math.cos(t)).toFixed(2), +(m.cy + m.r * Math.sin(t)).toFixed(2), 0.5]);
   }
   const it = { t: 'stroke', id: uid(), tool: 'pen', style: 'shape', color, size, pts };
-  if (prefs.dash) it.dash = true;
+  if (prefs.dash) it.dash = dashKind(prefs.dash);
   return it;
 }
 function compassGuide(ctx, m, k) {
@@ -2938,7 +2953,7 @@ function renderCompass() {
 }
 function shapeFromAct(a = act) {
   const base = { t: 'shape', id: uid(), color: prefs.color, size: prefs.sizes.shape };
-  if (prefs.dash) base.dash = true;
+  if (prefs.dash) base.dash = dashKind(prefs.dash);
   if (prefs.fill && prefs.shape !== 'line' && prefs.shape !== 'arrow') { base.fillMode = prefs.fill; base.fill = fillFor(prefs.color, prefs.fill); }
   if (HATCHES[prefs.hatch] && prefs.shape !== 'line' && prefs.shape !== 'arrow') base.hatch = prefs.hatch;
   if (prefs.shape === 'line' || prefs.shape === 'arrow') {
@@ -3162,8 +3177,17 @@ function styleSelTexts(fn) {
   refreshPage(p); commit(p, before); renderSel(); showTextStyle(selTexts()[0]);
   return true;
 }
+/* Stil, Ausrichten, Ebene, Als Stempel: bei einer Auswahl oben in der Werkzeugleiste (Symbole) */
+function selToolAction(a, btn) {
+  if (!S.sel) return;
+  if (a === 'style') openStylePop(btn);
+  else if (a === 'layer') showPop($('#layerPop'), btn);
+  else if (a === 'stamp') saveSelAsStamp();
+  else if (a === 'align') { $('#alignHint').textContent = alignUnits().length < 2 ? 'Nur ein Objekt markiert: es wird an der Seite ausgerichtet.' : 'Die markierten Objekte werden aneinander ausgerichtet.'; showPop($('#alignPop'), btn); }
+}
 function renderSel() {
   document.querySelectorAll('.selbox').forEach(n => n.remove());
+  $('#selTools').hidden = true;
   if (!S.sel || !S.note) return;
   const { p, ids } = S.sel;
   const items = p.items.filter(i => ids.has(i.id));
@@ -3189,7 +3213,7 @@ function renderSel() {
       + (line.kind === 'dim' ? (d => `<div class="lend mid" data-i="3" title="Maßlinie parallel verschieben" style="left:${(((d.a[0] + d.b[0]) / 2 - b.x) * sc + pad).toFixed(1)}px;top:${(((d.a[1] + d.b[1]) / 2 - b.y) * sc + pad).toFixed(1)}px"></div>`)(dimPts(line)) : '')
     : ['nw', 'ne', 'sw', 'se'].map(d => `<div class="handle ${d}" data-d="${d}" title="Größe ändern (Seitenverhältnis bleibt)"></div>`).join('')
       + ['n', 's', 'w', 'e'].map(d => `<div class="edge ${d === 'n' || d === 's' ? 'eh' : 'ew'} ${d}" data-d="${d}" title="${d === 'n' || d === 's' ? 'Höhe' : 'Breite'} ändern"></div>`).join('');
-  el.innerHTML = `<div class="selbar">${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : items.length === 1 && items[0].t === 'img' ? '<button data-a="crop">Zuschneiden</button>' : items.length === 1 && canRound(items[0]) ? `<button data-a="vtx"${vtxOn ? ' class="active"' : ''}>Ecken runden</button>` : ''}<button data-a="style">Stil ändern</button><button data-a="align">Ausrichten</button><button data-a="layer">Ebene</button><button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="stamp">Als Stempel</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}${vtxDots}`;
+  el.innerHTML = `<div class="selbar"><span class="selgrip" title="Leiste verschieben (ziehen) · doppelt tippen: zurück">⠿</span>${oneFormula ? `<button data-a="formula">${items[0].matrix ? 'Matrix bearbeiten' : 'Formel bearbeiten'}</button>` : items.length === 1 && items[0].t === 'text' ? '<button data-a="edittext">Text bearbeiten</button>' : items.length === 1 && items[0].t === 'table' ? '<button data-a="edittable">Tabelle bearbeiten</button>' : items.length === 1 && items[0].kind === 'dim' ? '<button data-a="dimtext">Maßzahl ändern</button>' : items.length === 1 && items[0].t === 'img' ? '<button data-a="crop">Zuschneiden</button>' : items.length === 1 && canRound(items[0]) ? `<button data-a="vtx"${vtxOn ? ' class="active"' : ''}>Ecken runden</button>` : ''}<button data-a="copy">Kopieren</button><button data-a="cut">Ausschneiden</button><button data-a="dup">Duplizieren</button><button data-a="del" class="danger">Löschen</button></div><div class="rot" title="Drehen"></div>${grips}${vtxDots}`;
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (e.target.closest('.selbar')) return;
@@ -3216,6 +3240,29 @@ function renderSel() {
     if (mode === 'rotate') { act.cx = b.x + b.w / 2; act.cy = b.y + b.h / 2; act.a0 = Math.atan2(act.y0 - act.cy, act.x0 - act.cx); }
     try { el.setPointerCapture(e.pointerId); } catch {}
   });
+  // Leiste mit Stift oder Finger an eine andere Stelle ziehen (gilt für diese Auswahl)
+  const bar = el.querySelector('.selbar'), key = [...ids].sort().join(',');
+  if (S.selbarOff && S.selbarOff.key !== key) S.selbarOff = null;
+  if (S.selbarOff) bar.style.translate = `${S.selbarOff.dx}px ${S.selbarOff.dy}px`;
+  const grip = bar.querySelector('.selgrip');
+  let gd = null, lastGrip = 0;
+  grip.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    const t = performance.now();
+    if (t - lastGrip < 350) { S.selbarOff = null; bar.style.translate = ''; lastGrip = 0; return; }
+    lastGrip = t;
+    const o = S.selbarOff || { dx: 0, dy: 0 };
+    gd = { x: e.clientX, y: e.clientY, dx: o.dx, dy: o.dy, id: e.pointerId };
+    try { grip.setPointerCapture(e.pointerId); } catch {}
+  });
+  grip.addEventListener('pointermove', e => {
+    if (!gd || e.pointerId !== gd.id) return;
+    e.stopPropagation();
+    S.selbarOff = { key, dx: gd.dx + e.clientX - gd.x, dy: gd.dy + e.clientY - gd.y };
+    bar.style.translate = `${S.selbarOff.dx}px ${S.selbarOff.dy}px`;
+  });
+  const endGrip = e => { if (gd && e.pointerId === gd.id) { e.stopPropagation(); gd = null; } };
+  grip.addEventListener('pointerup', endGrip); grip.addEventListener('pointercancel', endGrip);
   el.querySelector('.selbar').addEventListener('click', e => {
     const btn = e.target.closest('button'), a = btn?.dataset.a; if (!a) return;
     if (a === 'formula') { if (items[0].matrix) openGrid('matrix', p, items[0]); else openFormula(p, items[0]); }
@@ -3240,6 +3287,7 @@ function renderSel() {
     else selAction(a);
   });
   pageEls.get(p.id).el.appendChild(el);
+  $('#selTools').hidden = false;
 }
 /* ---- Smarte Hilfslinien: beim Verschieben/Skalieren an Kanten und Mitten anderer Objekte (und der Seitenmitte) einrasten ---- */
 const guidesOn = () => prefs.guides !== false;
@@ -3466,7 +3514,7 @@ function openStylePop(anchor) {
   const items = selItems(), sized = items.filter(hasSize);
   const box = $('#styleSwatches'); box.innerHTML = '';
   const cur = items.find(i => i.color && i.tool !== 'cover')?.color;
-  for (const c of COLORS) {
+  for (const c of favColors()) {
     const b = document.createElement('button');
     b.className = 'swatch' + (c === cur ? ' active' : ''); b.style.background = c; b.dataset.color = c; b.setAttribute('aria-label', 'Farbe ' + c);
     box.appendChild(b);
@@ -3481,6 +3529,10 @@ function openStylePop(anchor) {
   }
   const closed = items.filter(i => i.t === 'shape' && closedShape(i));
   $('#styleHatchRow').hidden = !closed.length;
+  const dl = items.filter(dashable);
+  $('#styleDashRow').hidden = !dl.length;
+  const curD = dl.length && dl.every(i => dashKind(i.dash) === dashKind(dl[0].dash)) ? dashKind(dl[0].dash) : null;
+  document.querySelectorAll('#styleDash [data-dash]').forEach(b => b.classList.toggle('active', b.dataset.dash === curD));
   const curH = closed.length && closed.every(i => (i.hatch || '') === (closed[0].hatch || '')) ? (closed[0].hatch || '') : null;
   document.querySelectorAll('#styleHatch [data-hatch]').forEach(b => b.classList.toggle('active', b.dataset.hatch === curH));
   if (sized.length) {
@@ -3491,6 +3543,21 @@ function openStylePop(anchor) {
   styleBefore = null;
   showPop($('#stylePop'), anchor);
 }
+// Linienart: Auswahl in der Werkzeugleiste (neue Formen) und im Stil-Menü (markierte Formen)
+const DASH_HTML = DASHES.map(([k, l]) => `<button data-dash="${k}" title="${l}">${dashIcon(k)}<span>${l}</span></button>`).join('');
+$('#dashKinds').innerHTML = $('#styleDash').innerHTML = DASH_HTML;
+function syncDashPop() { document.querySelectorAll('#dashKinds [data-dash]').forEach(b => b.classList.toggle('active', b.dataset.dash === dashKind(prefs.dash))); }
+$('#dashKinds').addEventListener('click', e => {
+  const b = e.target.closest('[data-dash]'); if (!b) return;
+  prefs.dash = b.dataset.dash || false; savePrefs(); syncDashPop(); updToolbar(); hidePops();
+});
+const dashable = it => it.t === 'shape' ? it.kind !== 'dim' : it.t === 'stroke' && it.tool === 'pen' && it.style === 'shape';
+$('#styleDash').addEventListener('click', e => {
+  const b = e.target.closest('[data-dash]'); if (!b) return;
+  const k = b.dataset.dash;
+  applyStyle(it => { if (dashable(it)) { if (k) it.dash = k; else delete it.dash; } }, true);
+  document.querySelectorAll('#styleDash [data-dash]').forEach(x => x.classList.toggle('active', x === b));
+});
 function applyStyle(fn, done) {
   if (!S.sel) return;
   const { p } = S.sel;
@@ -4434,18 +4501,42 @@ $('#stampPop').addEventListener('click', e => {
 /* ---------------- Werkzeugleiste ---------------- */
 function buildSwatches() {
   const box = $('#swatches'); box.innerHTML = '';
-  for (const c of COLORS) {
+  favColors().forEach((c, i) => {
     const b = document.createElement('button');
-    b.className = 'swatch'; b.style.background = c; b.dataset.color = c; b.title = c; b.setAttribute('aria-label', 'Farbe ' + c);
+    b.className = 'swatch'; b.style.background = c; b.dataset.color = c; b.dataset.fav = i; b.title = c + ' (lange drücken: Farbe ersetzen)'; b.setAttribute('aria-label', 'Farbe ' + c);
     box.appendChild(b);
-  }
+  });
 }
+/* Lieblingsfarbe ersetzen: lange auf eine Farbe drücken → Farbwähler; die neue Farbe ersetzt diese Stelle */
+let favTimer = 0, favIdx = -1, favLong = false;
+$('#swatches').addEventListener('pointerdown', e => {
+  const b = e.target.closest('[data-fav]'); if (!b) return;
+  favLong = false; clearTimeout(favTimer);
+  favTimer = setTimeout(() => {
+    favLong = true; favIdx = +b.dataset.fav; navigator.vibrate?.(15);
+    const inp = $('#favColor'); inp.value = /^#[0-9a-f]{6}$/i.test(b.dataset.color) ? b.dataset.color : '#000000';
+    try { inp.showPicker ? inp.showPicker() : inp.click(); } catch { inp.click(); }
+    if (!prefs.favHint) { prefs.favHint = true; savePrefs(); toast('Neue Farbe wählen – sie ersetzt diese Stelle in deiner Farbleiste. Zurücksetzen: Menü ⋮ → „Standardfarben wiederherstellen“.', 6000); }
+  }, 550);
+});
+for (const t of ['pointerup', 'pointerleave', 'pointercancel']) $('#swatches').addEventListener(t, () => clearTimeout(favTimer));
+$('#swatches').addEventListener('contextmenu', e => e.preventDefault());
+$('#favColor').addEventListener('change', e => {
+  if (favIdx < 0) return;
+  const list = [...favColors()]; list[favIdx] = e.target.value; prefs.favColors = list; favIdx = -1;
+  savePrefs(); buildSwatches(); setColor(e.target.value);
+});
 const dotPx = (t, v) => clamp(v * (t === 'eraser' ? 0.4 : t === 'marker' ? 0.6 : t === 'stamp' ? 0.35 : 2), 3, 24);
 /* Drei Schnellwahl-Stärken pro Werkzeug; langes Drücken speichert die aktuelle Stärke */
 const PRESETS = { pen: [1, 2.5, 5], marker: [8, 16, 28], eraser: [10, 24, 48], shape: [1, 2.5, 5], stamp: [20, 32, 52], restyle: [1, 2.5, 5] };
 const presetsFor = t => (prefs.presets && prefs.presets[t]) || PRESETS[t];
 function updToolbar() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === prefs.tool));
+  // Stift, Textmarker und Zauberstift zeigen ihre aktuelle Farbe
+  for (const t of ['pen', 'marker', 'restyle']) {
+    const b = document.querySelector(`.tool[data-tool="${t}"]`), c = (prefs.tool === t ? prefs.color : prefs.toolColors?.[t]) || (t === 'marker' ? COLORS[6] : prefs.color);
+    if (b) { b.classList.add('colored'); b.style.setProperty('--tc', c); }
+  }
   document.querySelectorAll('.swatch').forEach(b => b.classList.toggle('active', b.dataset.color === prefs.color));
   const t = prefs.tool, sizeTool = SIZE_RANGE[t] ? t : null;
   $('#sizeBox').hidden = !sizeTool;
@@ -4501,6 +4592,8 @@ function updToolbar() {
   $('#btnFill').title = 'Füllung: ' + ['aus', 'hell', 'voll'][fm] + ' (tippen zum Wechseln)';
   $('#btnFill').classList.toggle('active', !!prefs.fill);
   $('#btnDash').classList.toggle('active', !!prefs.dash);
+  $('#btnDash').innerHTML = dashIcon(dashKind(prefs.dash) || 'dash') + '<small>▾</small>';
+  $('#btnDash').title = 'Linienart: ' + DASHES.find(d => d[0] === dashKind(prefs.dash))[1];
   $('#optScribble').checked = prefs.scribble !== false;
   $('#optGuides').checked = prefs.guides !== false;
   $('#textOpts').hidden = t !== 'text' && !selTexts().length;
@@ -4650,7 +4743,8 @@ $('#toolbar').addEventListener('click', e => {
     setTool(b.dataset.tool);
     if (b.dataset.tool === 'restyle' && !prefs.rsHint) { prefs.rsHint = true; savePrefs(); toast('Zauberstift: Farbe und Stärke wählen, dann über Striche, Formen oder Text fahren – sie übernehmen den Stil.', 5500); }
   }
-  else if (b.dataset.color) setColor(b.dataset.color);
+  else if (b.dataset.color) { if (favLong) { favLong = false; return; } setColor(b.dataset.color); }
+  else if (b.dataset.sa) selToolAction(b.dataset.sa, b);
   else if (b.id === 'btnSnap') { prefs.snapText = prefs.snapText === false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnRuler') { prefs.ruler = !prefs.ruler; if (prefs.ruler) prefs.dim = false; savePrefs(); updToolbar(); }
   else if (b.id === 'btnDim') { prefs.dim = !prefs.dim; if (prefs.dim) prefs.ruler = false; savePrefs(); updToolbar(); if (prefs.dim && !prefs.dimHint) { prefs.dimHint = true; savePrefs(); toast('Bemaßung: von Punkt zu Punkt ziehen – oder mit dem Stift über eine Linie schweben und sie antippen. Maßstab über den Knopf daneben.', 7000); } }
@@ -4660,7 +4754,7 @@ $('#toolbar').addEventListener('click', e => {
   else if (b.id === 'btnFill') { prefs.fill = ((prefs.fill || 0) + 1) % 3; savePrefs(); updToolbar(); }
   else if (b.id === 'btnHead') { syncHeadPop(); showPop($('#headPop'), b); }
   else if (b.id === 'btnHatch') { syncHatchPop(); showPop($('#hatchPop'), b); }
-  else if (b.id === 'btnDash') { prefs.dash = !prefs.dash; savePrefs(); updToolbar(); }
+  else if (b.id === 'btnDash') { syncDashPop(); showPop($('#dashPop'), b); }
   else if (b.dataset.shape) {
     prefs.shape = b.dataset.shape; savePrefs(); updToolbar();
     if (prefs.shape === 'compass' && !S.compass) toast('Zirkel: Spitze auf den Mittelpunkt setzen und nach außen ziehen. Danach am Kreis ansetzen und herumfahren.', 5000);
@@ -4744,6 +4838,7 @@ $('#menuPop').addEventListener('click', async e => {
   else if (m === 'mark') toggleMark();
   else if (m === 'delPage') deletePage();
   else if (m === 'saveAs') saveToFile(true);
+  else if (m === 'favReset') { delete prefs.favColors; savePrefs(); buildSwatches(); updToolbar(); toast('Standardfarben wiederhergestellt.'); }
   else if (m === 'share') sharePdf();
   else if (m === 'zoomReset') { S.zoom = 1; layout(); }
   else if (m === 'penTest') { penLog.length = 0; $('#penLog').textContent = 'Warte auf Stift …'; $('#penTest').hidden = false; penTestOn = true; }
@@ -5674,7 +5769,7 @@ $('#tutDlg').addEventListener('click', e => {
 
 /* ---------------- Neuigkeiten nach einem Update ---------------- */
 const CHANGELOG = {
-  '7.0': ['Neu im Menü ⋮: „Nach dem Speichern FolderSync starten“ – FolderSync lädt gespeicherte PDFs dann sofort in die Cloud hoch, statt auf den nächsten Abgleich zu warten'],
+  '7.0': ['Neu im Menü ⋮: „Nach dem Speichern FolderSync starten“ – FolderSync lädt gespeicherte PDFs dann sofort in die Cloud hoch, statt auf den nächsten Abgleich zu warten', 'Auswahl: Stil, Ausrichten, Ebene und „Als Stempel“ jetzt als Symbole oben in der Werkzeugleiste; die Leiste an der Auswahl lässt sich am Griff ⠿ verschieben (doppelt tippen = zurück)', 'Stift, Textmarker und Zauberstift zeigen in der Leiste ihre aktuelle Farbe', 'Eigene Lieblingsfarben: lange auf eine Farbe in der Leiste drücken und eine neue wählen (zurücksetzen im Menü ⋮)', 'Mehr Linienarten für Formen: gestrichelt, kurze und lange Striche, gepunktet, Strich-Punkt – beim Zeichnen (Formen → Linienart) und nachträglich über „Stil ändern“'],
   '6.9': ['Neu: „PDF teilen …“ (Menü ⋮) – die PDF über das Android-Teilen-Menü z. B. mit „Nextcloud → Hochladen“ in einen Ordner legen. Funktioniert auch, wenn das Speichern in Nextcloud über die Dateiauswahl scheitert'],
   '6.8': ['Speichern: Kennt die Nextcloud-App die Datei nicht mehr („No file in database …“), erklärt die App jetzt, was zu tun ist, und bietet an, die Datei neu auszuwählen oder als neue Datei zu speichern'],
   '6.7': ['Bemaßung: waagrecht ↔, senkrecht ↕ und Winkel ∠ jetzt als eigene Knöpfe direkt neben „Bemaßung“ (nochmal antippen = normal)'],
